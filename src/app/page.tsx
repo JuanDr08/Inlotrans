@@ -99,33 +99,17 @@ export default function KioskoPage() {
     }
   }
 
-  const subirImagenDrive = async (file: File, idcedula: string) => {
-    try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve((reader.result as string).split(',')[1])
-        reader.onerror = reject
-        reader.readAsDataURL(file)
-      })
-
-      const filename = `foto_${idcedula}_${new Date().getTime()}.jpg`
-      const payload = {
-        fileName: filename,
-        mimeType: file.type || 'image/jpeg',
-        fileData: base64
-      }
-
-      const res = await fetch(UPLOAD_IMAGE_URL, {
-        method: 'POST',
-        body: JSON.stringify(payload)
-      })
-
-      const data = await res.json()
-      return data.downloadUrl
-    } catch (e) {
-      console.error('Error subiendo imagen', e)
-      return ''
-    }
+  const convertirImagenABase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        // Retornamos el string completo que incluye el prefijo 'data:image/...;base64,'
+        resolve(result);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -144,40 +128,46 @@ export default function KioskoPage() {
     setIsLoading(true)
 
     try {
-      // Registrar data principal inmediatamente
-      const res = await registrarAsistenciaAPI({
+      let base64Image = ''
+      if (fotoFile) {
+        base64Image = await convertirImagenABase64(fotoFile)
+      }
+
+      const promiseApi = registrarAsistenciaAPI({
         id: cedula,
         usuario_nombre: nombre,
         operacion,
         tipo,
-        foto_url: '' // will update async
+        foto_base64: base64Image
       })
 
-      if (!res.success) {
-        toast.error(res.error)
-        setIsLoading(false)
-        return
-      }
+      toast.promise(promiseApi, {
+        loading: 'Registrando tu asistencia...',
+        success: (res) => {
+          if (!res.success) {
+            throw new Error(res.error) // Lo atrapa el toast de error abajo
+          }
 
-      toast.success('Registro guardado correctamente')
+          // Limpiar formulario si fue exitoso
+          setTimeout(() => {
+            setCedula('')
+            setNombre('')
+            setOperacion('')
+            setTipo('ENTRADA')
+            setFotoFile(null)
+            setFotoPreview(null)
+          }, 1500)
 
-      // Background image upload
-      if (fotoFile) {
-        subirImagenDrive(fotoFile, cedula).then(console.log).catch(console.error)
-      }
+          return `¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`
+        },
+        error: (err) => `Error: ${err.message || 'No se pudo guardar el registro'}`
+      })
 
-      // Limpiar Formulario
-      setTimeout(() => {
-        setCedula('')
-        setNombre('')
-        setOperacion('')
-        setTipo('ENTRADA')
-        setFotoFile(null)
-        setFotoPreview(null)
-      }, 2000)
+      // Esperamos al server component request por si necesitamos deshabilitar botón temporalmente mientras carga
+      await promiseApi
 
     } catch (error) {
-      toast.error('Error procesando registro')
+      toast.error('Ocurrió un error inesperado al procesar')
     } finally {
       setIsLoading(false)
     }

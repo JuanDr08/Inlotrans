@@ -49,13 +49,13 @@ export async function registrarAsistenciaAPI({
     usuario_nombre,
     operacion,
     tipo,
-    foto_url
+    foto_base64 // New parameter
 }: {
     id: string
     usuario_nombre: string
     operacion: string
     tipo: string
-    foto_url: string
+    foto_base64: string
 }) {
     try {
         const supabase = await createClient()
@@ -85,7 +85,8 @@ export async function registrarAsistenciaAPI({
                 operacion,
                 tipo,
                 fecha_hora: fechaHora,
-                foto_url
+                foto_url: '', // Mantener por compatibilidad vieja
+                foto_base64 // Nueva columna
             })
             .select()
 
