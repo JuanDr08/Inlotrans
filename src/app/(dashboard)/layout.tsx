@@ -8,7 +8,8 @@ import {
     Settings,
     Clock,
     LogOut,
-    FileText
+    FileText,
+    Briefcase
 } from 'lucide-react'
 
 export default async function DashboardLayout({
@@ -56,6 +57,12 @@ export default async function DashboardLayout({
                         <Button variant="ghost" className="w-full justify-start gap-2">
                             <Settings className="h-4 w-4" />
                             Administración
+                        </Button>
+                    </Link>
+                    <Link href="/admin/operaciones">
+                        <Button variant="ghost" className="w-full justify-start gap-2">
+                            <Briefcase className="h-4 w-4" />
+                            Operaciones
                         </Button>
                     </Link>
                 </nav>

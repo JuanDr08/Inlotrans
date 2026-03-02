@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { validarCedula, getUltimoRegistro, registrarAsistenciaAPI } from './actions'
+import { getOperacionesActivas } from './(dashboard)/admin/operaciones-actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,6 +19,19 @@ export default function KioskoPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [fotoFile, setFotoFile] = useState<File | null>(null)
   const [fotoPreview, setFotoPreview] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [opcionesOp, setOpcionesOp] = useState<{ id: string, nombre: string }[]>([])
+
+  useEffect(() => {
+    async function loadOps() {
+      const res = await getOperacionesActivas()
+      if (res.success && res.data) {
+        setOpcionesOp(res.data)
+      }
+    }
+    loadOps()
+  }, [])
 
   // Debounce cedula searching
   useEffect(() => {
@@ -123,6 +137,11 @@ export default function KioskoPage() {
       return
     }
 
+    if (!fotoFile) {
+      toast.error('Es obligatorio tomar una fotografía para el registro.')
+      return
+    }
+
     setIsLoading(true)
     const toastId = toast.loading('Registrando tu asistencia...')
 
@@ -157,6 +176,9 @@ export default function KioskoPage() {
         setTipo('ENTRADA')
         setFotoFile(null)
         setFotoPreview(null)
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
       }, 1500)
 
     } catch (error: any) {
@@ -226,20 +248,10 @@ export default function KioskoPage() {
                   <SelectValue placeholder="Seleccione..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="Multidimensionales">Multidimensionales</SelectItem>
-                  <SelectItem value="Red polar">Red polar</SelectItem>
-                  <SelectItem value="Frigorifico">Frigorifico</SelectItem>
-                  <SelectItem value="Alkosto">Alkosto</SelectItem>
-                  <SelectItem value="Pepsico funza">Pepsico funza</SelectItem>
-                  <SelectItem value="Pepsico maquila">Pepsico maquila</SelectItem>
-                  <SelectItem value="Pepsico 3pd">Pepsico 3pd</SelectItem>
-                  <SelectItem value="materia prima B9">Materia prima B9</SelectItem>
-                  <SelectItem value="Administrativo J3">Administrativo J3</SelectItem>
-                  <SelectItem value="Administrativo B9">Administrativo B9</SelectItem>
-                  <SelectItem value="Giron">Giron</SelectItem>
-                  <SelectItem value="Buga">Buga</SelectItem>
-                  <SelectItem value="Pepsico Bucaramanga">Pepsico Bucaramanga</SelectItem>
-                  <SelectItem value="Pepsico Barranquilla">Pepsico Barranquilla</SelectItem>
+                  {opcionesOp.map(op => (
+                    <SelectItem key={op.id} value={op.nombre}>{op.nombre}</SelectItem>
+                  ))}
+                  {opcionesOp.length === 0 && <SelectItem value="cargando" disabled>Cargando operaciones...</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
@@ -252,6 +264,7 @@ export default function KioskoPage() {
                 <Camera className="w-5 h-5 text-slate-500" />
                 <span className="text-sm font-medium text-slate-600">Tomar Foto</span>
                 <input
+                  ref={fileInputRef}
                   type="file"
                   accept="image/*"
                   capture="environment"
