@@ -140,13 +140,14 @@ export default function KioskoPage() {
         foto_base64: base64Image
       })
 
-      if (!res.success) {
+      if (res && res.success === false) {
         // Mostramos el error directamente sacado del objeto
-        toast.error(res.error || 'Ocurrió un error al registrar', { id: toastId })
+        const errorMessage = res.error || 'Ocurrió un error al registrar'
+        toast.error(errorMessage, { id: toastId, duration: 5000 })
         return
       }
 
-      toast.success(`¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`, { id: toastId })
+      toast.success(`¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`, { id: toastId, duration: 5000 })
 
       // Limpiar formulario si fue exitoso
       setTimeout(() => {
@@ -159,7 +160,8 @@ export default function KioskoPage() {
       }, 1500)
 
     } catch (error: any) {
-      toast.error('Ocurrió un error inesperado al procesar. Verifica tu conexión.', { id: toastId })
+      console.error(error)
+      toast.error('Ocurrió un error inesperado al procesar. Verifica tu conexión.', { id: toastId, duration: 5000 })
     } finally {
       setIsLoading(false)
     }

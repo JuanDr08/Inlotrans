@@ -70,11 +70,6 @@ export async function registrarAsistenciaAPI({
             if (ultimoReg.data.tipo === tipo) {
                 return { success: false, error: `No se puede registrar ${tipo} porque el último registro también fue ${ultimoReg.data.tipo}.` }
             }
-            if (ultimoReg.data.tipo === 'ENTRADA' && tipo === 'SALIDA') {
-                if (!operacion || ultimoReg.data.operacion !== operacion) {
-                    return { success: false, error: `La SALIDA debe ser de la misma operación que la ENTRADA. (${ultimoReg.data.operacion})` }
-                }
-            }
         }
 
         const { data: insertData, error } = await supabase
@@ -85,16 +80,18 @@ export async function registrarAsistenciaAPI({
                 operacion,
                 tipo,
                 fecha_hora: fechaHora,
-                foto_url: '', // Mantener por compatibilidad vieja
-                foto_base64 // Nueva columna
+                foto_base64 // Nueva columna (foto_url was completely dropped as requested)
             })
             .select()
 
-        if (error) throw error
+        if (error) {
+            console.error('[Supabase Insert Error]', error)
+            return { success: false, error: 'Error interno en la BD: ' + error.message }
+        }
 
         return { success: true, data: insertData[0] }
     } catch (error: any) {
-        console.error('[registrarAsistenciaAPI] Error:', error)
-        return { success: false, error: error.message }
+        console.error('[registrarAsistenciaAPI] Exception:', error)
+        return { success: false, error: error.message || 'Error del Servidor' }
     }
 }
