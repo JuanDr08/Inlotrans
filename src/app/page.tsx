@@ -9,8 +9,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { Camera } from 'lucide-react'
 
-const UPLOAD_IMAGE_URL = 'https://script.google.com/macros/s/AKfycbwzL6XlO2l_nXEhSQVUBHUBt5Ca-8DYuARnzairZtnADYgI3R0iQ3Qwz7AvZRisDmBTHQ/exec'
-
 export default function KioskoPage() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
@@ -126,6 +124,7 @@ export default function KioskoPage() {
     }
 
     setIsLoading(true)
+    const toastId = toast.loading('Registrando tu asistencia...')
 
     try {
       let base64Image = ''
@@ -133,7 +132,7 @@ export default function KioskoPage() {
         base64Image = await convertirImagenABase64(fotoFile)
       }
 
-      const promiseApi = registrarAsistenciaAPI({
+      const res = await registrarAsistenciaAPI({
         id: cedula,
         usuario_nombre: nombre,
         operacion,
@@ -141,33 +140,26 @@ export default function KioskoPage() {
         foto_base64: base64Image
       })
 
-      toast.promise(promiseApi, {
-        loading: 'Registrando tu asistencia...',
-        success: (res) => {
-          if (!res.success) {
-            throw new Error(res.error) // Lo atrapa el toast de error abajo
-          }
+      if (!res.success) {
+        // Mostramos el error directamente sacado del objeto
+        toast.error(res.error || 'Ocurrió un error al registrar', { id: toastId })
+        return
+      }
 
-          // Limpiar formulario si fue exitoso
-          setTimeout(() => {
-            setCedula('')
-            setNombre('')
-            setOperacion('')
-            setTipo('ENTRADA')
-            setFotoFile(null)
-            setFotoPreview(null)
-          }, 1500)
+      toast.success(`¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`, { id: toastId })
 
-          return `¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`
-        },
-        error: (err) => `Error: ${err.message || 'No se pudo guardar el registro'}`
-      })
+      // Limpiar formulario si fue exitoso
+      setTimeout(() => {
+        setCedula('')
+        setNombre('')
+        setOperacion('')
+        setTipo('ENTRADA')
+        setFotoFile(null)
+        setFotoPreview(null)
+      }, 1500)
 
-      // Esperamos al server component request por si necesitamos deshabilitar botón temporalmente mientras carga
-      await promiseApi
-
-    } catch (error) {
-      toast.error('Ocurrió un error inesperado al procesar')
+    } catch (error: any) {
+      toast.error('Ocurrió un error inesperado al procesar. Verifica tu conexión.', { id: toastId })
     } finally {
       setIsLoading(false)
     }
