@@ -2,7 +2,7 @@
     "crons": [
         {
             "path": "/api/cron/autocierre",
-            "schedule": "*/30 * * * *"
+            "schedule": "0 0 * * *"
         }
     ]
 }
