@@ -207,7 +207,7 @@ export default function KioskoPage() {
               <Input
                 id="cedula"
                 value={cedula}
-                onChange={(e) => setCedula(e.target.value)}
+                onChange={(e) => setCedula(e.target.value.replace(/\s+/g, ''))}
                 required
                 placeholder="Ingrese su cédula"
                 autoComplete="off"
