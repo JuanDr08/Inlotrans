@@ -10,7 +10,11 @@ import { crearEmpleado } from './actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
-export function EmpleadoForm() {
+export function EmpleadoForm({
+    operaciones
+}: {
+    operaciones: { id: string, nombre: string }[]
+}) {
     const router = useRouter()
     const [isLoading, setIsLoading] = useState(false)
 
@@ -128,20 +132,10 @@ export function EmpleadoForm() {
                                 <SelectValue placeholder="Seleccione una operación..." />
                             </SelectTrigger>
                             <SelectContent>
-                                <SelectItem value="Multidimensionales">Multidimensionales</SelectItem>
-                                <SelectItem value="Red polar">Red polar</SelectItem>
-                                <SelectItem value="Frigorifico">Frigorifico</SelectItem>
-                                <SelectItem value="Alkosto">Alkosto</SelectItem>
-                                <SelectItem value="Pepsico funza">Pepsico funza</SelectItem>
-                                <SelectItem value="Pepsico maquila">Pepsico maquila</SelectItem>
-                                <SelectItem value="Pepsico 3pd">Pepsico 3pd</SelectItem>
-                                <SelectItem value="materia prima B9">materia prima B9</SelectItem>
-                                <SelectItem value="Administrativo J3">Administrativo J3</SelectItem>
-                                <SelectItem value="Administrativo B9">Administrativo B9</SelectItem>
-                                <SelectItem value="Giron">Giron</SelectItem>
-                                <SelectItem value="Buga">Buga</SelectItem>
-                                <SelectItem value="Pepsico Bucaramanga">Pepsico Bucaramanga</SelectItem>
-                                <SelectItem value="Pepsico Barranquilla">Pepsico Barranquilla</SelectItem>
+                                {operaciones.map(op => (
+                                    <SelectItem key={op.id} value={op.nombre}>{op.nombre}</SelectItem>
+                                ))}
+                                {operaciones.length === 0 && <SelectItem value="default" disabled>No hay operaciones activas</SelectItem>}
                             </SelectContent>
                         </Select>
                     </div>

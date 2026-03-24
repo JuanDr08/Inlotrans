@@ -1,0 +1,224 @@
+'use client'
+
+import { useState } from 'react'
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table"
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Edit2, Ban, CheckCircle, Search } from 'lucide-react'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { editarEmpleado, cambiarEstadoEmpleado } from './actions'
+import { toast } from 'sonner'
+import { useRouter } from 'next/navigation'
+
+export function EmpleadosTable({
+    empleados,
+    operaciones
+}: {
+    empleados: any[],
+    operaciones: { id: string, nombre: string }[]
+}) {
+    const router = useRouter()
+    const [editingEmp, setEditingEmp] = useState<any>(null)
+    const [isSaving, setIsSaving] = useState(false)
+    const [searchTerm, setSearchTerm] = useState('')
+
+    // Form states
+    const [editNombre, setEditNombre] = useState('')
+    const [editCargo, setEditCargo] = useState('')
+    const [editOp, setEditOp] = useState('')
+    const [editStatus, setEditStatus] = useState('')
+
+    const openEditDialog = (emp: any) => {
+        setEditingEmp(emp)
+        setEditNombre(emp.nombre)
+        setEditCargo(emp.cargo)
+        setEditOp(emp.operacion)
+        setEditStatus(emp.status)
+    }
+
+    const handleSave = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!editingEmp) return
+
+        setIsSaving(true)
+        const formData = new FormData()
+        formData.append('cedula', editingEmp.id)
+        formData.append('nombre', editNombre)
+        formData.append('cargo', editCargo)
+        formData.append('operacion', editOp)
+        formData.append('status', editStatus)
+
+        const result = await editarEmpleado(formData)
+
+        setIsSaving(false)
+        if (!result.success) {
+            toast.error(result.error)
+        } else {
+            toast.success('Empleado actualizado exitosamente')
+            setEditingEmp(null)
+            router.refresh()
+        }
+    }
+
+    const toggleStatus = async (emp: any) => {
+        const newStatus = emp.status === 'activo' ? 'inactivo' : 'activo'
+        const res = await cambiarEstadoEmpleado(emp.id, newStatus)
+        if (res.success) {
+            toast.success(`Empleado ${newStatus}`)
+            router.refresh()
+        } else {
+            toast.error(res.error || 'Error cambiando estado')
+        }
+    }
+
+    const filteredEmpleados = empleados?.filter((emp: any) => 
+        emp.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        emp.id.includes(searchTerm)
+    )
+
+    return (
+        <div className="space-y-4">
+            <div className="pb-4">
+                <Input
+                    placeholder="Buscar por cédula o nombre completo..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    className="max-w-md bg-white border-slate-200"
+                />
+            </div>
+            
+            <div className="rounded-md border overflow-x-auto">
+                <Table>
+                <TableHeader>
+                    <TableRow>
+                        <TableHead>Cédula</TableHead>
+                        <TableHead>Nombre Completo</TableHead>
+                        <TableHead>Operación Base</TableHead>
+                        <TableHead>Estado</TableHead>
+                        <TableHead className="text-right">Acciones</TableHead>
+                    </TableRow>
+                </TableHeader>
+                <TableBody>
+                    {filteredEmpleados?.length === 0 && (
+                        <TableRow>
+                            <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                                No se encontraron empleados.
+                            </TableCell>
+                        </TableRow>
+                    )}
+                    {filteredEmpleados?.map((emp: any) => (
+                        <TableRow key={emp.id}>
+                            <TableCell className="font-semibold">{emp.id}</TableCell>
+                            <TableCell>
+                                <div className="font-medium text-sm">{emp.nombre}</div>
+                                <div className="text-xs text-muted-foreground">{emp.cargo}</div>
+                            </TableCell>
+                            <TableCell>{emp.operacion}</TableCell>
+                            <TableCell>
+                                {emp.status === 'activo' ? (
+                                    <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Activo</Badge>
+                                ) : (
+                                    <Badge variant="destructive">Inactivo</Badge>
+                                )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                                <div className="flex justify-end gap-2">
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="text-blue-600 hover:text-blue-700 hover:bg-blue-50"
+                                        onClick={() => openEditDialog(emp)}
+                                        title="Editar Empleado"
+                                    >
+                                        <Edit2 className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className={emp.status === 'activo' ? "text-amber-600 hover:text-amber-700 hover:bg-amber-50" : "text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50"}
+                                        onClick={() => toggleStatus(emp)}
+                                        title={emp.status === 'activo' ? 'Inactivar Empleado' : 'Activar Empleado'}
+                                    >
+                                        {emp.status === 'activo' ? <Ban className="h-4 w-4" /> : <CheckCircle className="h-4 w-4" />}
+                                    </Button>
+                                </div>
+                            </TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
+
+            <Dialog open={!!editingEmp} onOpenChange={(open) => !open && setEditingEmp(null)}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Editar Funcionario</DialogTitle>
+                    </DialogHeader>
+                    {editingEmp && (
+                        <form onSubmit={handleSave} className="space-y-4 py-4">
+                            <div className="space-y-2">
+                                <Label>Cédula</Label>
+                                <Input value={editingEmp.id} readOnly disabled className="bg-slate-50" />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-nombre">Nombre Completo *</Label>
+                                <Input id="edit-nombre" value={editNombre} onChange={e => setEditNombre(e.target.value)} required />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-cargo">Cargo *</Label>
+                                <Input id="edit-cargo" value={editCargo} onChange={e => setEditCargo(e.target.value)} required />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-op">Operación *</Label>
+                                <Select value={editOp} onValueChange={setEditOp}>
+                                    <SelectTrigger id="edit-op">
+                                        <SelectValue placeholder="Seleccione una operación..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {operaciones.map(op => (
+                                            <SelectItem key={op.id} value={op.nombre}>{op.nombre}</SelectItem>
+                                        ))}
+                                        {operaciones.length === 0 && <SelectItem value="default" disabled>No hay operaciones activas</SelectItem>}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-status">Estado *</Label>
+                                <Select value={editStatus} onValueChange={setEditStatus}>
+                                    <SelectTrigger id="edit-status">
+                                        <SelectValue placeholder="Seleccionar estado" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="activo">Activo</SelectItem>
+                                        <SelectItem value="inactivo">Inactivo</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                            </div>
+
+                            <div className="pt-4 flex justify-end gap-2">
+                                <Button type="button" variant="outline" onClick={() => setEditingEmp(null)}>Cancelar</Button>
+                                <Button type="submit" className="bg-blue-600 hover:bg-blue-700" disabled={isSaving}>
+                                    {isSaving ? 'Guardando...' : 'Guardar Cambios'}
+                                </Button>
+                            </div>
+                        </form>
+                    )}
+                </DialogContent>
+            </Dialog>
+        </div>
+        </div>
+    )
+}
