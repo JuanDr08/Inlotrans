@@ -33,18 +33,19 @@ export async function updateSession(request: NextRequest) {
 
     // Protect routes depending on auth status
     const isAuthRoute = request.nextUrl.pathname.startsWith('/login')
+    const isPublicRoute = request.nextUrl.pathname === '/'
 
-    // If not logged in and not on login page, redirect to login
-    if (!user && !isAuthRoute) {
+    // If not logged in and not on login page or public route, redirect to login
+    if (!user && !isAuthRoute && !isPublicRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
     }
 
-    // If logged in and trying to access login, redirect to dashboard or home
+    // If logged in and trying to access login, redirect to dashboard
     if (user && isAuthRoute) {
         const url = request.nextUrl.clone()
-        url.pathname = '/'
+        url.pathname = '/admin'
         return NextResponse.redirect(url)
     }
 
