@@ -33,11 +33,11 @@ export async function updateSession(request: NextRequest) {
 
     // Protect routes depending on auth status
     const isAuthRoute = request.nextUrl.pathname.startsWith('/login')
-    const isPublicRoute = request.nextUrl.pathname === '/'
     const isCronRoute = request.nextUrl.pathname.startsWith('/api/cron')
 
-    // If not logged in and not on login page, public route, or cron API, redirect to login
-    if (!user && !isAuthRoute && !isPublicRoute && !isCronRoute) {
+    // If not logged in and not on login or cron route, redirect to login
+    // NOTE: The kiosk (/) also requires login to prevent remote attendance registration
+    if (!user && !isAuthRoute && !isCronRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)

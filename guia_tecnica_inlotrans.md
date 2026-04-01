@@ -1,7 +1,8 @@
 # 📘 Guía Técnica Completa — Inlotrans Asistencia V2
 
-> **Versión:** 1.0  
-> **Fecha:** 2026-03-31  
+> **Versión:** 1.1  
+> **Fecha:** 2026-04-01  
+> **Última Actualización:** Optimización de rendimiento, corrección de CRON, mejora de filtros  
 > **Aplicación:** Sistema de Control de Asistencia para la empresa Inlotrans (logística y transporte)  
 > **Propósito:** Documentación exhaustiva de arquitectura, lógica de negocio, módulos, flujos de datos, base de datos, cálculos de horas y exportaciones.
 
@@ -66,7 +67,8 @@ asistence-v2/
     │   │   │   └── actions.ts          # crearNovedad(), eliminarNovedad(), buscarEmpleadoNombre()
     │   │   └── admin/                  # ⚙️ Administración y Reportes  
     │   │       ├── page.tsx            # Server Component: reporte de horas liquidado
-    │   │       ├── AdminFilters.tsx    # Client Component: filtros de periodo/operación
+    │   │       ├── AdminFilters.tsx    # Client Component: filtros de periodo/operación (multi-select dropdown)
+    │   │       ├── AdminTablesClient.tsx # Client Component: renderizado de tablas de liquidación
     │   │       ├── AdminExcelButton.tsx# Client Component: botón dropdown de exportaciones
     │   │       ├── operaciones-actions.ts  # CRUD de operaciones + caché
     │   │       └── operaciones/        
@@ -79,7 +81,7 @@ asistence-v2/
     │       │   └── route.ts            # GET: Planos contables → Excel (.xlsx ExcelJS)
     │       └── cron/
     │           └── autocierre/
-    │               └── route.ts        # POST: Auto-cierre de jornadas abiertas >8h
+    │               └── route.ts        # GET: Auto-cierre de jornadas abiertas >8h (corregido de POST→GET)
     ├── components/
     │   └── ui/                         # shadcn/ui components
     │       ├── badge.tsx, button.tsx, card.tsx, dialog.tsx
@@ -210,13 +212,15 @@ sequenceDiagram
 
     User->>Middleware: Request a cualquier ruta
     Middleware->>Supabase Auth: getUser()
-    alt No autenticado
+    alt No autenticado y ruta no es /login ni /api/cron
         Supabase Auth-->>Middleware: user = null
         Middleware-->>User: Redirect /login
+    else Es ruta /api/cron
+        Middleware-->>Dashboard: Pass through (sin auth)
     else Autenticado
         Supabase Auth-->>Middleware: user object
         alt Ruta es /login
-            Middleware-->>User: Redirect / (home)
+            Middleware-->>User: Redirect /admin
         else Otra ruta
             Middleware-->>Dashboard: Pass through
         end
@@ -229,14 +233,18 @@ sequenceDiagram
 - **`src/lib/supabase/middleware.ts`**: Función `updateSession()` que:
   1. Crea un `createServerClient` con las cookies de la request
   2. Llama `getUser()` para validar la sesión
-  3. Redirige a `/login` si no hay usuario
-  4. Redirige a `/` si el usuario ya autenticado intenta acceder a `/login`
+  3. **Bypass de rutas CRON:** Las rutas `/api/cron/*` pasan sin autenticación (Vercel las llama sin sesión de usuario)
+  4. Redirige a `/login` si no hay usuario (incluye la ruta `/` del kiosco)
+  5. Redirige a `/admin` si el usuario ya autenticado intenta acceder a `/login`
 - **`src/lib/supabase/server.ts`**: Factory `createClient()` para Server Components y Server Actions. Usa `cookies()` de Next.js.
 - **`src/lib/supabase/client.ts`**: Factory `createClient()` para componentes del browser (no usado actualmente).
 - **`src/app/login/actions.ts`**: Acciones `login()`, `signup()`, `signout()`.
 
+> [!IMPORTANT]
+> La ruta raíz `/` (Kiosco) **requiere autenticación** intencionalmente. Esto se decidió para evitar que empleados registren asistencia desde su casa. El kiosco debe usarse solo desde terminales físicos autenticados en la ubicación de trabajo.
+
 > [!NOTE]
-> La ruta raíz `/` (Kiosco) está **fuera** del route group `(dashboard)` pero **dentro** del alcance del middleware. Esto significa que TAMBIÉN requiere autenticación, lo cual podría ser un problema si se quiere usar como kiosco público.
+> Las rutas `/api/cron/*` están **excluidas** del middleware de autenticación para que Vercel pueda invocarlas correctamente vía GET sin sesión de usuario.
 
 ### 4.3 Protección del Dashboard
 
@@ -252,6 +260,9 @@ if (!user) { redirect('/login') }
 
 > [!IMPORTANT]
 > Este es el corazón del sistema. Reside en `src/lib/calculoHoras.ts` (414 líneas). La lógica calcula MINUTO A MINUTO el tipo de cada minuto trabajado.
+
+> [!TIP]
+> **Optimización v1.1 (2026-04-01):** Todas las consultas a la tabla `registros` usan selección explícita de columnas: `id, usuario_nombre, operacion, tipo, fecha_hora`. Anteriormente se usaba `select('*')`, lo que incluía la columna `foto_base64` (~34KB por registro), generando payloads de ~40MB que causaban `RangeError: Maximum call stack size exceeded` en la serialización de RSC de Next.js. Con la selección explícita, el payload se redujo a ~18KB.
 
 ### 5.1 Diagrama de Flujo General
 
@@ -342,7 +353,7 @@ Lee la tabla `tarifas` de Supabase donde `activo = true`. Cachea en memoria por 
 #### `calcularHorasUsuarioPorPeriodo(cedula, fechaInicio, fechaFin)`
 Función orquestadora para un usuario:
 
-1. Consulta todos los `registros` del usuario en el rango de fechas
+1. Consulta `registros` del usuario en el rango con `select('id, usuario_nombre, operacion, tipo, fecha_hora')` — **SIN incluir `foto_base64`**
 2. Elimina duplicados por `tipo + fecha_hora`
 3. Empareja ENTRADA→SALIDA de forma secuencial (FIFO)
 4. Para cada par, convierte a hora Colombia y llama a `calcularPeriodosHoras`
@@ -355,12 +366,15 @@ Función orquestadora para un usuario:
    - `valorTotal` y `detalleValores` (9 tipos en COP)
    - `registros` (pares entrada-salida procesados)
 
-#### `calcularHorasTodosUsuariosPorPeriodo(fechaInicio, fechaFin, operaciones?)`
-1. Consulta todos los registros en el rango
+#### `calcularHorasTodosUsuariosPorPeriodoOptimizado(fechaInicio, fechaFin, operaciones?)`
+1. Consulta todos los registros en el rango con `select('id, usuario_nombre, operacion, tipo, fecha_hora')` — **SIN incluir `foto_base64`**
 2. Filtra por operaciones si se especifican
 3. Identifica usuarios únicos
 4. Ejecuta `calcularHorasUsuarioPorPeriodo` en **paralelo** con `Promise.all`
 5. Filtra nulls y retorna resultados
+
+> [!CAUTION]
+> **Regla crítica:** Cualquier nueva consulta a la tabla `registros` **NUNCA** debe usar `select('*')`. Siempre listar explícitamente las columnas necesarias para evitar cargar la columna `foto_base64` que pesa ~34KB por registro y causa crashes de memoria en RSC.
 
 ### 5.4 Funciones Utilitarias de Precisión
 
@@ -461,6 +475,12 @@ Función orquestadora para un usuario:
 
 **Propósito:** Visualización de reportes de liquidación de horas por período.
 
+**Arquitectura de componentes:**
+- **`page.tsx`** (Server Component): Orquesta la carga de datos, construye los períodos y pasa los resultados al cliente.
+- **`AdminFilters.tsx`** (Client Component): Controles de filtrado con multi-select dropdown para operaciones.
+- **`AdminTablesClient.tsx`** (Client Component): Renderiza las tablas de liquidación por período.
+- **`AdminExcelButton.tsx`** (Client Component): Dropdown de exportación a Excel.
+
 **Filtros disponibles (`AdminFilters`):**
 - **Mes:** Enero–Diciembre (índice 0-based)
 - **Año:** 2024, 2025, 2026
@@ -469,13 +489,13 @@ Función orquestadora para un usuario:
   - `semanal`: Genera 4 tarjetas (semanas del 1-7, 8-14, 15-21, 22-fin)
   - `mensual`: Una sola tarjeta con el mes completo
   - `personalizado`: Inputs de fecha "desde" y "hasta"
-- **Operaciones:** Selector múltiple tipo "chips" para filtrar por operación
+- **Operaciones:** Multi-select dropdown con checkboxes (reemplazó los botones/chips que ocupaban mucho espacio). Muestra un contador de selecciones ("2 operaciones seleccionadas") y chips removibles debajo del select. Incluye botón "Limpiar selección" y cierre automático al hacer click fuera.
 
 **Lógica del Server Component (`page.tsx`):**
 1. Lee `searchParams` (mes, anio, periodo, start, end, op)
 2. Construye array de `grupos` con nombre, fecha inicio y fecha fin
-3. Para cada grupo, ejecuta `calcularHorasTodosUsuariosPorPeriodo()`
-4. Renderiza una `<Card>` por grupo con tabla de resultados
+3. Para cada grupo, ejecuta `calcularHorasTodosUsuariosPorPeriodoOptimizado()`
+4. Pasa los resultados a `AdminTablesClient` que renderiza las tablas
 
 **Tabla de resultados muestra:**
 - Nombre + cédula del empleado
@@ -561,22 +581,29 @@ Con selector adicional de **quincena** (`1Q` = días 1-14, `2Q` = días 15-fin).
 - Incluye hojas de diccionarios
 - Usa formato de "fecha Excel" (días desde epoch 1899-12-30)
 
-### 7.3 `POST /api/cron/autocierre`
+### 7.3 `GET /api/cron/autocierre`
 
 **Propósito:** Cierre automático de jornadas abiertas (ENTRADA sin SALIDA correspondiente).
 
-**Schedule:** Diariamente a medianoche UTC (`0 0 * * *` — configurado en `vercel.json`).
+**Schedule:** Diariamente a medianoche UTC (`0 0 * * *` — configurado en `vercel.json`). Equivale a las 7:00 PM hora Colombia.
+
+> [!IMPORTANT]
+> **Correcciones aplicadas en v1.1 (2026-04-01):** Se encontraron y corrigieron **4 bugs** que impedían la ejecución del cron en producción:
+> 1. **Método HTTP:** Cambiado de `POST` a `GET` — Vercel crons SOLO envían requests GET.
+> 2. **Cliente de Supabase:** Cambiado de `createClient()` (basado en cookies) a `createClient()` directo con `SUPABASE_SERVICE_ROLE_KEY` — los crons no tienen sesión de navegador.
+> 3. **Middleware bypass:** Se agregó exclusión de `/api/cron` en el middleware de auth — el cron era redirigido a `/login` (307).
+> 4. **Seguridad:** Se agregó soporte para `CRON_SECRET` opcional — verifica header `Authorization: Bearer {CRON_SECRET}` si la variable está configurada en Vercel.
 
 **Algoritmo:**
-1. Consulta registros de las últimas 48 horas
-2. Construye un mapa `latestStateByUser`:
+1. Verifica `CRON_SECRET` si está configurado (seguridad contra invocaciones externas)
+2. Crea cliente Supabase con `SUPABASE_SERVICE_ROLE_KEY` (bypass RLS, sin necesidad de cookies)
+3. Consulta registros de las últimas 48 horas con `select('row_number, id, usuario_nombre, operacion, tipo, fecha_hora')`
+4. Construye un mapa `latestStateByUser`:
    - Si registro es ENTRADA → guarda como estado abierto
    - Si registro es SALIDA → elimina la entrada abierta del usuario
-3. Filtra las entradas abierta que tienen > 8 horas sin cerrar
-4. Para cada una, inserta un registro SALIDA con `fecha_hora = entrada + 8 horas`
-
-> [!WARNING]
-> El CRON usa `foto_url: null` en el insert (campo legacy), no `foto_base64`. Esto NO causará error ya que Supabase acepta ambos, pero es una inconsistencia.
+5. Filtra las entradas abiertas que tienen > 8 horas sin cerrar
+6. Para cada una, inserta un registro SALIDA con `fecha_hora = entrada + 8 horas`
+7. Registra en console.log para monitoreo en Vercel Logs
 
 ---
 
@@ -646,50 +673,64 @@ Las fechas se normalizan a `Date.UTC(year, month, day)` para comparación exacta
 
 ## 11. Problemas Conocidos y Oportunidades de Mejora
 
-### 11.1 Inconsistencias Detectadas
+### 11.1 Problemas Resueltos en v1.1 (2026-04-01)
+
+| ID | Severidad Original | Problema | Solución |
+|----|---------------------|----------|----------|
+| ✅ R1 | 🔴 Crítico | `select('*')` en `calculoHoras.ts` cargaba `foto_base64` (~34KB/registro), causando payloads de 40MB y `Maximum call stack size exceeded` | Reemplazado por `select('id, usuario_nombre, operacion, tipo, fecha_hora')`. Payload reducido a ~18KB |
+| ✅ R2 | 🔴 Crítico | CRON usaba `POST` handler — Vercel crons solo envían GET | Cambiado a `export async function GET()` |
+| ✅ R3 | 🔴 Crítico | CRON usaba `createClient()` con cookies vacías (sin sesión) | Cambiado a `createClient()` directo con `SUPABASE_SERVICE_ROLE_KEY` |
+| ✅ R4 | 🔴 Crítico | Middleware redirigía `/api/cron/autocierre` a `/login` (307) | Agregada exclusión de `/api/cron` en middleware |
+| ✅ R5 | 🟡 Medio | Filtros de operaciones como botones/chips ocupaban demasiado espacio | Reemplazados por multi-select dropdown con checkboxes y chips removibles |
+
+### 11.2 Inconsistencias Vigentes
 
 | ID | Severidad | Ubicación | Problema |
 |----|-----------|-----------|----------|
 | B1 | 🔴 Alto | `novedades/page.tsx` vs `novedades/actions.ts` | Los campos de la BD (`razon`, `remunerable`, `start_date`, `end_date`, `causa`) no coinciden con los que la UI intenta renderizar (`notas`, `es_remunerado`, `fecha_inicio`, `fecha_fin`, `causa_codigo`). El historial de novedades puede fallar silenciosamente o mostrar datos vacíos. |
 | B2 | 🟡 Medio | `novedades/page.tsx` L25 | Query ordena por `fecha_inicio` que probablemente no existe (el campo se llama `start_date` o `fecha_novedad`). |
-| B3 | 🟡 Medio | `cron/autocierre/route.ts` L72 | Usa `foto_url: null` (campo legacy) cuando la tabla ahora espera `foto_base64`. |
+| B3 | 🟡 Medio | `cron/autocierre/route.ts` L72 | Usa `foto_url: null` (campo legacy) cuando la tabla ahora espera `foto_base64`. No causa error pero es inconsistencia. |
 | B4 | 🟡 Medio | `operaciones-actions.ts` L84 | `revalidateTag('operaciones', 'max')` — la función `revalidateTag` solo acepta un argumento. El `'max'` extra es ignorado o puede causar error. |
-| B5 | 🟢 Bajo | `page.tsx` (Kiosco) | El kiosco requiere autenticación (está cubierto por el middleware), lo cual puede no ser deseado para un terminal público. |
-| B6 | 🟢 Bajo | Dashboard `page.tsx` | La página dashboard muestra KPIs estáticos (`0` y `0 hrs`) sin datos reales. |
-| B7 | 🟢 Bajo | `AdminFilters.tsx` L9 | `ANIOS` está hardcodeado a `[2024, 2025, 2026]`. Debería ser dinámico. |
+| B5 | 🟢 Bajo | Dashboard `page.tsx` | La página dashboard muestra KPIs estáticos (`0` y `0 hrs`) sin datos reales. |
+| B6 | 🟢 Bajo | `AdminFilters.tsx` L9 | `ANIOS` está hardcodeado a `[2024, 2025, 2026]`. Debería ser dinámico. |
 
-### 11.2 Oportunidades de Optimización
+### 11.3 Oportunidades de Optimización
 
 | ID | Área | Propuesta |
 |----|------|-----------|
 | O1 | Cálculo de Horas | El algoritmo itera minuto a minuto. Para un turno de 10 horas = 600 iteraciones. Para 100 empleados × 15 días = ~900,000 iteraciones. Considerar optimización por "tramos" en vez de minuto a minuto. |
-| O2 | Kiosco - Fotos | Guardar fotos en base64 en la BD crece rápidamente (~200KB por foto). Mejor usar Supabase Storage y guardar solo la URL. |
+| O2 | Kiosco - Fotos | Guardar fotos en base64 en la BD crece rápidamente (~34KB por foto comprimida). Mejor usar Supabase Storage y guardar solo la URL. |
 | O3 | Dashboard | Implementar métricas reales (activos hoy, horas extras del período, etc.) |
 | O4 | Sidebar móvil | Agregar menú hamburguesa para dispositivos móviles. |
 | O5 | Roles | Implementar sistema de roles (admin/operador) para restringir acceso a módulos sensibles. |
 | O6 | Caché | Los cachés in-memory se pierden en cada cold start serverless. Migrar a Redis o Vercel KV para persistencia. |
 | O7 | Validación | Usar Zod schemas consistentes para todas las acciones del servidor (ya tienen la dependencia instalada pero no se usa). |
+| O8 | CRON Seguridad | Configurar `CRON_SECRET` en Vercel para proteger el endpoint de autocierre (ya soportado en el código). |
 
 ---
 
 ## 12. Variables de Entorno
 
-| Variable | Uso | Público |
-|----------|-----|---------|
-| `NEXT_PUBLIC_SUPABASE_URL` | URL del proyecto Supabase | ✅ Sí |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon/public key para browser | ✅ Sí |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (admin, bypass RLS) | ❌ Solo server |
+| Variable | Uso | Público | Usado en |
+|----------|-----|---------|----------|
+| `NEXT_PUBLIC_SUPABASE_URL` | URL del proyecto Supabase | ✅ Sí | Toda la app |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Anon/public key para browser | ✅ Sí | Toda la app |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (admin, bypass RLS) | ❌ Solo server | CRON autocierre |
+| `CRON_SECRET` | Token de seguridad para verificar requests del cron | ❌ Solo server | CRON autocierre (opcional) |
 
-> [!CAUTION]
-> El `SUPABASE_SERVICE_ROLE_KEY` está declarado en `.env.local` pero no se usa en el código. Todas las operaciones usan la `ANON_KEY`, lo cual depende de las políticas RLS de Supabase para la seguridad.
+> [!NOTE]
+> El `SUPABASE_SERVICE_ROLE_KEY` se usa en el endpoint CRON `/api/cron/autocierre` para acceder a la BD sin sesión de usuario (bypass de RLS). Las demás operaciones de la app usan la `ANON_KEY` con las políticas RLS de Supabase.
+
+> [!TIP]
+> Para máxima seguridad del CRON, configura `CRON_SECRET` en las variables de entorno de Vercel (Settings → Environment Variables). Vercel lo enviará automáticamente en el header `Authorization` y el endpoint lo verificará.
 
 ---
 
 ## 13. Deployment y CRON
 
-**Hosting:** Vercel
-**Build Command:** `next build`
-**Dev:** `next dev`
+**Hosting:** Vercel  
+**Build Command:** `next build`  
+**Dev:** `next dev`  
 
 **Vercel CRON Jobs** (configuración en `vercel.json`):
 ```json
@@ -701,6 +742,15 @@ Las fechas se normalizan a `Date.UTC(year, month, day)` para comparación exacta
 }
 ```
 → Se ejecuta diariamente a medianoche UTC (7:00 PM hora Colombia).
+
+**Requisitos para que el CRON funcione:**
+1. El handler debe ser `GET` (no POST) — Vercel crons solo envían GET
+2. El endpoint debe estar excluido del middleware de autenticación
+3. Debe usar un cliente de Supabase independiente (con `SUPABASE_SERVICE_ROLE_KEY`, sin cookies)
+4. (Opcional) Configurar `CRON_SECRET` en variables de entorno de Vercel para seguridad
+
+> [!WARNING]
+> Vercel crons **no siguen redirects HTTP** (3xx). Si el middleware redirige la ruta del cron a `/login`, el cron fallará silenciosamente.
 
 ---
 
@@ -744,4 +794,13 @@ Las fechas se normalizan a `Date.UTC(year, month, day)` para comparación exacta
 
 ---
 
-> **Este documento refleja el estado actual del código al 2026-03-31. Debe actualizarse conforme se realicen cambios significativos en la arquitectura o la lógica de negocio.**
+## 16. Historial de Cambios
+
+| Fecha | Versión | Cambios |
+|-------|---------|---------|
+| 2026-03-31 | 1.0 | Documento inicial con arquitectura completa |
+| 2026-04-01 | 1.1 | Optimización de queries (select explícito en `registros`), corrección de 4 bugs críticos en CRON, filtro de operaciones cambiado a multi-select dropdown, nuevo componente `AdminTablesClient`, kiosco requiere login, middleware excluye `/api/cron` |
+
+---
+
+> **Este documento refleja el estado actual del código al 2026-04-01. Debe actualizarse conforme se realicen cambios significativos en la arquitectura o la lógica de negocio.**
