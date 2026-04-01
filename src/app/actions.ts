@@ -12,10 +12,13 @@ export async function validarCedula(cedula: string) {
         .from('usuarios')
         .select('id, nombre, status, operacion')
         .eq('id', cedula)
-        .single()
+        .maybeSingle()
 
-    if (error || !usuario) {
-        console.error("Error validando cédula (Posible bloqueo RLS):", error)
+    if (error && error.code !== 'PGRST116') {
+        console.error("Error validando cédula (Posible bloqueo RLS o de red):", error)
+    }
+
+    if (!usuario) {
         return { success: false, error: 'Usuario no encontrado o sin permisos' }
     }
 
@@ -31,13 +34,17 @@ export async function getUltimoRegistro(cedula: string) {
 
     const { data: registro, error } = await supabase
         .from('registros')
-        .select('*')
+        .select('id, tipo, fecha_hora')
         .eq('id', cedula)
         .order('fecha_hora', { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
-    if (error || !registro) {
+    if (error && error.code !== 'PGRST116') {
+        console.error("Error en getUltimoRegistro:", error)
+    }
+
+    if (!registro) {
         return { success: false }
     }
 

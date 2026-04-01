@@ -43,10 +43,10 @@ export async function updateSession(request: NextRequest) {
         return NextResponse.redirect(url)
     }
 
-    // If logged in and trying to access login, redirect to dashboard
+    // If logged in and trying to access login, redirect to kiosk
     if (user && isAuthRoute) {
         const url = request.nextUrl.clone()
-        url.pathname = '/admin'
+        url.pathname = '/'
         return NextResponse.redirect(url)
     }
 

@@ -220,7 +220,7 @@ sequenceDiagram
     else Autenticado
         Supabase Auth-->>Middleware: user object
         alt Ruta es /login
-            Middleware-->>User: Redirect /admin
+            Middleware-->>User: Redirect / (kiosco)
         else Otra ruta
             Middleware-->>Dashboard: Pass through
         end
@@ -235,7 +235,7 @@ sequenceDiagram
   2. Llama `getUser()` para validar la sesión
   3. **Bypass de rutas CRON:** Las rutas `/api/cron/*` pasan sin autenticación (Vercel las llama sin sesión de usuario)
   4. Redirige a `/login` si no hay usuario (incluye la ruta `/` del kiosco)
-  5. Redirige a `/admin` si el usuario ya autenticado intenta acceder a `/login`
+  5. Redirige a `/` si el usuario ya autenticado intenta acceder a `/login`
 - **`src/lib/supabase/server.ts`**: Factory `createClient()` para Server Components y Server Actions. Usa `cookies()` de Next.js.
 - **`src/lib/supabase/client.ts`**: Factory `createClient()` para componentes del browser (no usado actualmente).
 - **`src/app/login/actions.ts`**: Acciones `login()`, `signup()`, `signout()`.
