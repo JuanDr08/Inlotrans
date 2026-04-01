@@ -1,12 +1,31 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
+import { NextRequest, NextResponse } from 'next/server'
 
-export async function POST() {
+// Vercel crons ALWAYS use GET — this MUST be a GET handler
+export async function GET(request: NextRequest) {
     try {
-        const supabase = await createClient()
+        // Optional: Verify the request comes from Vercel Cron
+        // If you set CRON_SECRET in Vercel env vars, Vercel sends it in the Authorization header
+        const authHeader = request.headers.get('authorization')
+        if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+        }
 
-        // 1. Check for last events to emulate autocierreHoras.js missing WITH query logic securely using NextJS Array filtering
-        // Fetch last 48 hrs entries instead of full DB
+        // Use the service role key directly — cron jobs have NO user session/cookies
+        // The server.ts createClient() depends on cookies() which is empty for cron requests
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
+        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+
+        if (!supabaseUrl || !supabaseServiceKey) {
+            return NextResponse.json({ 
+                success: false, 
+                error: 'Missing SUPABASE env vars for cron' 
+            }, { status: 500 })
+        }
+
+        const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+        // Fetch entries from the last 48 hours
         const limits = new Date()
         limits.setHours(limits.getHours() - 48)
         const limitsIso = limits.toISOString()
@@ -22,17 +41,16 @@ export async function POST() {
         }
 
         if (!registros || registros.length === 0) {
-            return NextResponse.json({ success: true, message: 'No hay entradas recientes' })
+            return NextResponse.json({ success: true, message: 'No hay entradas recientes', registros_cerrados: 0 })
         }
 
-        // Identify Open Entries (Entradas missing a Salida)
+        // Identify open entries (ENTRADA without a matching SALIDA)
         const latestStateByUser: Record<string, any> = {}
 
         registros.forEach((reg) => {
             if (reg.tipo === 'ENTRADA') {
                 latestStateByUser[reg.id] = reg
             } else if (reg.tipo === 'SALIDA') {
-                // If there is an entry then output dismisses the entry
                 if (latestStateByUser[reg.id]) {
                     delete latestStateByUser[reg.id]
                 }
@@ -40,7 +58,7 @@ export async function POST() {
         })
 
         const nowTime = new Date().getTime()
-        const limitHours = 8 * 60 * 60 * 1000 // 8 hours mapped in MS
+        const limitHours = 8 * 60 * 60 * 1000 // 8 hours in ms
 
         const entradasAbiertas = Object.values(latestStateByUser).filter((entrada: any) => {
             const entradaTime = new Date(entrada.fecha_hora).getTime()
@@ -74,7 +92,7 @@ export async function POST() {
                 .select()
 
             if (insertError) {
-                console.error('Error insertando cierre automatico:', insertError)
+                console.error('Error insertando cierre automático:', insertError)
                 continue
             }
 
@@ -87,6 +105,8 @@ export async function POST() {
             })
         }
 
+        console.log(`[CRON AUTOCIERRE] ${new Date().toISOString()} - Cerradas ${detalles.length} entradas`)
+
         return NextResponse.json({
             success: true,
             mensaje: `Se cerraron automáticamente ${detalles.length} entradas`,
@@ -95,6 +115,7 @@ export async function POST() {
         })
 
     } catch (error: any) {
+        console.error('[CRON AUTOCIERRE] Error:', error.message)
         return NextResponse.json({ success: false, error: error.message }, { status: 500 })
     }
 }

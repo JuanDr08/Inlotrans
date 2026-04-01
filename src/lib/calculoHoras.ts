@@ -228,7 +228,7 @@ export async function calcularHorasUsuarioPorPeriodo(cedula: string, fechaInicio
         const supabase = await createClient()
         const { data: registros, error } = await supabase
             .from('registros')
-            .select('*')
+            .select('id, usuario_nombre, operacion, tipo, fecha_hora')
             .eq('id', cedula)
             .gte('fecha_hora', fechaInicio.toISOString())
             .lte('fecha_hora', fechaFin.toISOString())
@@ -409,5 +409,273 @@ export async function calcularHorasTodosUsuariosPorPeriodo(fechaInicio: Date, fe
     } catch (error) {
         console.error('Error al calcular horas globales:', error)
         throw error
+    }
+}
+
+// ==================================================
+// MOTOR DE CÁLCULO OPTIMIZADO (TRAMOS Y BATCH QUERY)
+// ==================================================
+
+export function calcularPeriodosHorasOptimizado(entradaBogota: Date, salidaBogota: Date, diasFestivos: Date[]) {
+    const resultado = {
+        totalMinutos: 0,
+        minutosNormales: 0,
+        minutosExtrasOrdinarias: 0,
+        minutosExtrasNocturnas: 0,
+        minutosNocturnas: 0,
+        minutosDomingos: 0,
+        minutosFestivos: 0,
+        minutosDomingosFestivosNocturnos: 0,
+        minutosExtrasDominicalFestivo: 0,
+        minutosExtrasNocturnaDominicalFestivo: 0,
+        periodos: [] as any[]
+    };
+
+    const diffMs = salidaBogota.getTime() - entradaBogota.getTime();
+    const totalMinutos = Math.floor(diffMs / (1000 * 60));
+    resultado.totalMinutos = totalMinutos;
+
+    if (totalMinutos <= 0) return resultado;
+
+    let minutosAcumulados = 0;
+    let momentoActualMs = entradaBogota.getTime();
+
+    while (minutosAcumulados < totalMinutos) {
+        const momentoActual = new Date(momentoActualMs);
+        const horaUTC = momentoActual.getUTCHours();
+        
+        let minutosHastaCambioHorario = 0;
+        if (horaUTC >= 6 && horaUTC < 19) {
+            const next19 = new Date(momentoActual);
+            next19.setUTCHours(19, 0, 0, 0);
+            minutosHastaCambioHorario = Math.floor((next19.getTime() - momentoActual.getTime()) / 60000);
+        } else if (horaUTC >= 19) {
+            const nextMidnight = new Date(momentoActual);
+            nextMidnight.setUTCHours(24, 0, 0, 0); 
+            minutosHastaCambioHorario = Math.floor((nextMidnight.getTime() - momentoActual.getTime()) / 60000);
+        } else {
+            const next6 = new Date(momentoActual);
+            next6.setUTCHours(6, 0, 0, 0);
+            minutosHastaCambioHorario = Math.floor((next6.getTime() - momentoActual.getTime()) / 60000);
+        }
+        
+        const minutosHastaExtra = minutosAcumulados < 480 ? (480 - minutosAcumulados) : Infinity;
+        
+        let chunkMinutos = Math.min(
+            minutosHastaCambioHorario > 0 ? minutosHastaCambioHorario : 1,
+            minutosHastaExtra,
+            totalMinutos - minutosAcumulados
+        );
+        
+        if (chunkMinutos <= 0) chunkMinutos = 1;
+
+        const esNocturno = esHorarioNocturno(momentoActual);
+        const inicioDia = new Date(momentoActual);
+        inicioDia.setUTCHours(0, 0, 0, 0);
+        const { isDomingo: esDiaDomingo, isFestivo: esDiaFestivo } = esDomingoOFestivo(inicioDia, diasFestivos);
+        const esExtra = minutosAcumulados >= 480;
+        
+        let tipoMinuto;
+        if (esDiaDomingo || esDiaFestivo) {
+            if (esExtra) {
+                tipoMinuto = esNocturno ? 'extraNocturnaDominicalFestivo' : 'extraDominicalFestivo';
+            } else {
+                if (esNocturno) {
+                    tipoMinuto = 'domingoFestivoNocturno';
+                } else {
+                    tipoMinuto = esDiaDomingo ? 'domingo' : 'festivo';
+                }
+            }
+        } else if (esExtra) {
+            tipoMinuto = esNocturno ? 'extraNocturno' : 'extra';
+        } else {
+            tipoMinuto = esNocturno ? 'nocturno' : 'normal';
+        }
+
+        switch (tipoMinuto) {
+            case 'normal': resultado.minutosNormales += chunkMinutos; break;
+            case 'extra': resultado.minutosExtrasOrdinarias += chunkMinutos; break;
+            case 'extraNocturno': resultado.minutosExtrasNocturnas += chunkMinutos; break;
+            case 'nocturno': resultado.minutosNocturnas += chunkMinutos; break;
+            case 'domingo': resultado.minutosDomingos += chunkMinutos; break;
+            case 'festivo': resultado.minutosFestivos += chunkMinutos; break;
+            case 'domingoFestivoNocturno': resultado.minutosDomingosFestivosNocturnos += chunkMinutos; break;
+            case 'extraDominicalFestivo': resultado.minutosExtrasDominicalFestivo += chunkMinutos; break;
+            case 'extraNocturnaDominicalFestivo': resultado.minutosExtrasNocturnaDominicalFestivo += chunkMinutos; break;
+        }
+
+        minutosAcumulados += chunkMinutos;
+        momentoActualMs += chunkMinutos * 60000;
+    }
+
+    return resultado;
+}
+
+export async function calcularHorasTodosUsuariosPorPeriodoOptimizado(fechaInicio: Date, fechaFin: Date, operacionesGasto: string[] = []) {
+    try {
+        const supabase = await createClient();
+
+        let query = supabase
+            .from('registros')
+            .select('id, usuario_nombre, operacion, tipo, fecha_hora')
+            .gte('fecha_hora', fechaInicio.toISOString())
+            .lte('fecha_hora', fechaFin.toISOString())
+            .order('fecha_hora', { ascending: true });
+
+        if (operacionesGasto.length > 0) {
+            query = query.in('operacion', operacionesGasto);
+        }
+
+        const { data: registrosTotales, error } = await query;
+        if (error) throw error;
+        if (!registrosTotales || registrosTotales.length === 0) return [];
+
+        const añoInicio = fechaInicio.getFullYear();
+        const añoFin = fechaFin.getFullYear();
+        let diasFestivos = await obtenerDiasFestivos(añoInicio);
+        if (añoFin !== añoInicio) {
+            const festivosAñoFin = await obtenerDiasFestivos(añoFin);
+            diasFestivos = [...diasFestivos, ...festivosAñoFin];
+        }
+        const tarifas = await obtenerTarifas();
+
+        const registrosPorUsuario: Record<string, any[]> = {};
+        for (const reg of registrosTotales) {
+            if (!registrosPorUsuario[reg.id]) {
+                registrosPorUsuario[reg.id] = [];
+            }
+            registrosPorUsuario[reg.id].push(reg);
+        }
+
+        const resultadosFinales = [];
+
+        for (const [cedula, registros] of Object.entries(registrosPorUsuario)) {
+            const registrosUnicos: any[] = [];
+            const vistos = new Set();
+            for (const registro of registros) {
+                const key = `${registro.tipo}-${new Date(registro.fecha_hora).getTime()}`;
+                if (!vistos.has(key)) {
+                    vistos.add(key);
+                    registrosUnicos.push(registro);
+                }
+            }
+
+            const pares = [];
+            const entradasAbiertas = [];
+
+            for (const registro of registrosUnicos) {
+                if (registro.tipo === 'ENTRADA') {
+                    entradasAbiertas.push(registro);
+                } else if (registro.tipo === 'SALIDA') {
+                    if (entradasAbiertas.length > 0) {
+                        const entrada = entradasAbiertas.shift();
+                        pares.push({ entrada, salida: registro });
+                    }
+                }
+            }
+
+            if (pares.length === 0) continue;
+
+            const usuarioData = {
+                cedula,
+                nombre: registrosUnicos[registrosUnicos.length - 1].usuario_nombre,
+                operacion: registrosUnicos[registrosUnicos.length - 1].operacion
+            };
+
+            let totalMinutos = 0, minutosNormales = 0, minutosExtrasOrdinarias = 0, minutosExtrasNocturnas = 0;
+            let minutosNocturnas = 0, minutosDomingos = 0, minutosFestivos = 0, minutosDomingosFestivosNocturnos = 0;
+            let minutosExtrasDominicalFestivo = 0, minutosExtrasNocturnaDominicalFestivo = 0;
+
+            const registrosCalculados = [];
+            for (const par of pares) {
+                // Importante: toColombiaTime no es exportado. 
+                // Ah, pero estamos dentro del archivo, así que podemos llamarlo libremente.
+                const entrada = toColombiaTime(par.entrada.fecha_hora);
+                const salida = toColombiaTime(par.salida.fecha_hora);
+                const periodos = calcularPeriodosHorasOptimizado(entrada, salida, diasFestivos);
+
+                totalMinutos += periodos.totalMinutos;
+                minutosNormales += periodos.minutosNormales;
+                minutosExtrasOrdinarias += periodos.minutosExtrasOrdinarias;
+                minutosExtrasNocturnas += periodos.minutosExtrasNocturnas;
+                minutosNocturnas += periodos.minutosNocturnas;
+                minutosDomingos += periodos.minutosDomingos;
+                minutosFestivos += periodos.minutosFestivos;
+                minutosDomingosFestivosNocturnos += periodos.minutosDomingosFestivosNocturnos;
+                minutosExtrasDominicalFestivo += periodos.minutosExtrasDominicalFestivo;
+                minutosExtrasNocturnaDominicalFestivo += periodos.minutosExtrasNocturnaDominicalFestivo;
+
+                registrosCalculados.push({
+                    entrada: entrada.toISOString(),
+                    salida: salida.toISOString(),
+                    horasCalculadas: periodos
+                });
+            }
+
+            const valorNormales = calcularValorPorMinutos(minutosNormales, tarifas.normal);
+            const valorExtrasOrdinarias = calcularValorPorMinutos(minutosExtrasOrdinarias, tarifas.extra);
+            const valorExtrasNocturnas = calcularValorPorMinutos(minutosExtrasNocturnas, tarifas.extraNocturno);
+            const valorNocturnas = calcularValorPorMinutos(minutosNocturnas, tarifas.nocturno);
+            const valorDomingos = calcularValorPorMinutos(minutosDomingos, tarifas.domingo);
+            const valorFestivos = calcularValorPorMinutos(minutosFestivos, tarifas.festivo);
+            const valorDomingosFestivosNocturnos = calcularValorPorMinutos(minutosDomingosFestivosNocturnos, tarifas.domingoFestivoNocturno);
+            const valorExtrasDominicalFestivo = calcularValorPorMinutos(minutosExtrasDominicalFestivo, tarifas.extraDominicalFestivo);
+            const valorExtrasNocturnaDominicalFestivo = calcularValorPorMinutos(minutosExtrasNocturnaDominicalFestivo, tarifas.extraNocturnaDominicalFestivo);
+
+            const valorTotal = Math.round((
+                valorNormales + valorExtrasOrdinarias + valorExtrasNocturnas +
+                valorNocturnas + valorDomingos + valorFestivos + valorDomingosFestivosNocturnos +
+                valorExtrasDominicalFestivo + valorExtrasNocturnaDominicalFestivo
+            ) * 100) / 100;
+
+            resultadosFinales.push({
+                ...usuarioData,
+                periodo: { inicio: fechaInicio.toISOString(), fin: fechaFin.toISOString() },
+                totalMinutos,
+                horasTotales: minutosAHoras(totalMinutos),
+                horasTotalesFormato: horasAFormato(minutosAHoras(totalMinutos)),
+                detalleMinutos: {
+                    normales: minutosNormales,
+                    extrasOrdinarias: minutosExtrasOrdinarias,
+                    extrasNocturnas: minutosExtrasNocturnas,
+                    nocturnas: minutosNocturnas,
+                    domingos: minutosDomingos,
+                    festivos: minutosFestivos,
+                    domingosFestivosNocturnos: minutosDomingosFestivosNocturnos,
+                    extrasDominicalFestivo: minutosExtrasDominicalFestivo,
+                    extrasNocturnaDominicalFestivo: minutosExtrasNocturnaDominicalFestivo
+                },
+                horasFormato: {
+                    normales: horasAFormato(minutosAHoras(minutosNormales)),
+                    extrasOrdinarias: horasAFormato(minutosAHoras(minutosExtrasOrdinarias)),
+                    extrasNocturnas: horasAFormato(minutosAHoras(minutosExtrasNocturnas)),
+                    nocturnas: horasAFormato(minutosAHoras(minutosNocturnas)),
+                    domingos: horasAFormato(minutosAHoras(minutosDomingos)),
+                    festivos: horasAFormato(minutosAHoras(minutosFestivos)),
+                    domingosFestivosNocturnos: horasAFormato(minutosAHoras(minutosDomingosFestivosNocturnos)),
+                    extrasDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasDominicalFestivo)),
+                    extrasNocturnaDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasNocturnaDominicalFestivo))
+                },
+                valorTotal,
+                detalleValores: {
+                    normal: valorNormales,
+                    extrasOrdinarias: valorExtrasOrdinarias,
+                    extrasNocturnas: valorExtrasNocturnas,
+                    nocturnas: valorNocturnas,
+                    domingos: valorDomingos,
+                    festivos: valorFestivos,
+                    domingosFestivosNocturnos: valorDomingosFestivosNocturnos,
+                    extrasDominicalFestivo: valorExtrasDominicalFestivo,
+                    extrasNocturnaDominicalFestivo: valorExtrasNocturnaDominicalFestivo
+                },
+                registros: registrosCalculados
+            });
+        }
+
+        // Importante! Ordenar o la presentación puede variar
+        return resultadosFinales;
+    } catch (error) {
+        console.error('Error al calcular horas globales optimizadas:', error);
+        throw error;
     }
 }

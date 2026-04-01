@@ -34,9 +34,10 @@ export async function updateSession(request: NextRequest) {
     // Protect routes depending on auth status
     const isAuthRoute = request.nextUrl.pathname.startsWith('/login')
     const isPublicRoute = request.nextUrl.pathname === '/'
+    const isCronRoute = request.nextUrl.pathname.startsWith('/api/cron')
 
-    // If not logged in and not on login page or public route, redirect to login
-    if (!user && !isAuthRoute && !isPublicRoute) {
+    // If not logged in and not on login page, public route, or cron API, redirect to login
+    if (!user && !isAuthRoute && !isPublicRoute && !isCronRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
