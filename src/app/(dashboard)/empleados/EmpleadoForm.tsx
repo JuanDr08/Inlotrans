@@ -1,28 +1,39 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { crearEmpleado } from './actions'
+import { getTurnosPorNombreOperacion } from '../admin/operaciones-actions'
+import type { Turno } from '../admin/operaciones-actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 
 export function EmpleadoForm({
-    operaciones
+    operaciones,
+    rol,
+    operacionFija
 }: {
     operaciones: { id: string, nombre: string }[]
+    rol: string
+    operacionFija: string | null
 }) {
     const router = useRouter()
     const [isLoading, setIsLoading] = useState(false)
+
+    const isCoordinador = rol === 'coordinador' && !!operacionFija
 
     // Select values
     const [dia, setDia] = useState('')
     const [mes, setMes] = useState('')
     const [anio, setAnio] = useState('')
-    const [operacion, setOperacion] = useState('')
+    const [operacion, setOperacion] = useState(isCoordinador ? operacionFija : '')
+    const [turnoId, setTurnoId] = useState('')
+    const [turnos, setTurnos] = useState<Turno[]>([])
+    const [turnosLoading, setTurnosLoading] = useState(false)
 
     const dias = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
     const meses = [
@@ -33,6 +44,26 @@ export function EmpleadoForm({
     ]
     const currentYear = new Date().getFullYear()
     const anios = Array.from({ length: 100 }, (_, i) => String(currentYear - i))
+
+    // Cargar turnos cuando cambia la operacion
+    useEffect(() => {
+        if (!operacion) {
+            setTurnos([])
+            setTurnoId('')
+            return
+        }
+
+        setTurnosLoading(true)
+        getTurnosPorNombreOperacion(operacion).then(res => {
+            if (res.success && res.data) {
+                setTurnos(res.data)
+            } else {
+                setTurnos([])
+            }
+            setTurnoId('')
+            setTurnosLoading(false)
+        })
+    }, [operacion])
 
     async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault()
@@ -53,6 +84,7 @@ export function EmpleadoForm({
         const birthdate = `${anio}-${mes}-${dia}`
         formData.append('birthdate', birthdate)
         formData.append('operacion', operacion)
+        if (turnoId) formData.append('turno_id', turnoId)
 
         const result = await crearEmpleado(formData)
 
@@ -66,7 +98,8 @@ export function EmpleadoForm({
             setDia('')
             setMes('')
             setAnio('')
-            setOperacion('')
+            setOperacion(isCoordinador ? operacionFija : '')
+            setTurnoId('')
             router.refresh()
         }
     }
@@ -127,7 +160,7 @@ export function EmpleadoForm({
 
                     <div className="space-y-2">
                         <Label htmlFor="operacion">Operación *</Label>
-                        <Select value={operacion} onValueChange={setOperacion}>
+                        <Select value={operacion} onValueChange={setOperacion} disabled={isCoordinador}>
                             <SelectTrigger>
                                 <SelectValue placeholder="Seleccione una operación..." />
                             </SelectTrigger>
@@ -138,6 +171,41 @@ export function EmpleadoForm({
                                 {operaciones.length === 0 && <SelectItem value="default" disabled>No hay operaciones activas</SelectItem>}
                             </SelectContent>
                         </Select>
+                    </div>
+
+                    {operacion && (
+                        <div className="space-y-2">
+                            <Label htmlFor="turno">Turno Asignado</Label>
+                            {turnosLoading ? (
+                                <p className="text-sm text-muted-foreground">Cargando turnos...</p>
+                            ) : turnos.length > 0 ? (
+                                <Select value={turnoId} onValueChange={setTurnoId}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Seleccione un turno..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {turnos.map(t => (
+                                            <SelectItem key={t.id} value={t.id}>
+                                                {t.nombre} ({t.hora_inicio.slice(0, 5)} — {t.hora_fin.slice(0, 5)})
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">No hay turnos configurados para esta operación</p>
+                            )}
+                        </div>
+                    )}
+
+                    <div className="space-y-2">
+                        <Label htmlFor="salario">Salario Mensual</Label>
+                        <Input
+                            id="salario"
+                            name="salario"
+                            type="number"
+                            placeholder="Ej. 1300000"
+                            min="0"
+                        />
                     </div>
 
                     <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isLoading}>

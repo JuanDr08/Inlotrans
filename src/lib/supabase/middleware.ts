@@ -1,6 +1,16 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
+// Rutas que solo admin puede acceder
+const ADMIN_ONLY_ROUTES = ['/admin/operaciones', '/admin/usuarios']
+
+// Rutas del dashboard (requieren perfil admin o coordinador)
+function isDashboardRoute(pathname: string): boolean {
+    return pathname.startsWith('/empleados')
+        || pathname.startsWith('/novedades')
+        || pathname.startsWith('/admin')
+}
+
 export async function updateSession(request: NextRequest) {
     let supabaseResponse = NextResponse.next({
         request,
@@ -31,23 +41,48 @@ export async function updateSession(request: NextRequest) {
         data: { user },
     } = await supabase.auth.getUser()
 
-    // Protect routes depending on auth status
-    const isAuthRoute = request.nextUrl.pathname.startsWith('/login')
-    const isCronRoute = request.nextUrl.pathname.startsWith('/api/cron')
+    const pathname = request.nextUrl.pathname
+    const isAuthRoute = pathname.startsWith('/login')
+    const isCronRoute = pathname.startsWith('/api/cron')
 
-    // If not logged in and not on login or cron route, redirect to login
-    // NOTE: The kiosk (/) also requires login to prevent remote attendance registration
+    // No autenticado: redirigir a login (excepto login y cron)
     if (!user && !isAuthRoute && !isCronRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
     }
 
-    // If logged in and trying to access login, redirect to kiosk
+    // Autenticado intentando acceder a login: redirigir al kiosco
     if (user && isAuthRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/'
         return NextResponse.redirect(url)
+    }
+
+    // Gate por roles para rutas del dashboard
+    if (user && isDashboardRoute(pathname)) {
+        const { data: perfil } = await supabase
+            .from('perfiles')
+            .select('rol')
+            .eq('id', user.id)
+            .single()
+
+        // Sin perfil = trabajador o cuenta sin vincular -> solo kiosco
+        if (!perfil) {
+            const url = request.nextUrl.clone()
+            url.pathname = '/'
+            return NextResponse.redirect(url)
+        }
+
+        // Coordinador no puede acceder a rutas admin-only
+        if (perfil.rol === 'coordinador') {
+            const isAdminOnly = ADMIN_ONLY_ROUTES.some(route => pathname.startsWith(route))
+            if (isAdminOnly) {
+                const url = request.nextUrl.clone()
+                url.pathname = '/admin'
+                return NextResponse.redirect(url)
+            }
+        }
     }
 
     return supabaseResponse

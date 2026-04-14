@@ -56,13 +56,13 @@ export async function registrarAsistenciaAPI({
     usuario_nombre,
     operacion,
     tipo,
-    foto_base64 // New parameter
+    foto_base64
 }: {
     id: string
     usuario_nombre: string
     operacion: string
     tipo: string
-    foto_base64: string
+    foto_base64: string | null
 }) {
     try {
         const supabase = await createClient()
@@ -71,12 +71,22 @@ export async function registrarAsistenciaAPI({
         // using ISO string representation directly
         const fechaHora = new Date().toISOString()
 
-        // Additional Backend Validations
+        // State machine validation para ENTRADA/SALIDA/PAUSA_INICIO/PAUSA_FIN
+        const validTransitions: Record<string, string[]> = {
+            'ENTRADA': ['SALIDA', 'PAUSA_INICIO'],
+            'SALIDA': ['ENTRADA'],
+            'PAUSA_INICIO': ['PAUSA_FIN'],
+            'PAUSA_FIN': ['SALIDA', 'PAUSA_INICIO'],
+        }
+
         const ultimoReg = await getUltimoRegistro(id)
         if (ultimoReg.success && ultimoReg.data) {
-            if (ultimoReg.data.tipo === tipo) {
-                return { success: false, error: `No se puede registrar ${tipo} porque el último registro también fue ${ultimoReg.data.tipo}.` }
+            const ultimoTipo = ultimoReg.data.tipo
+            if (!validTransitions[ultimoTipo]?.includes(tipo)) {
+                return { success: false, error: `No se puede registrar ${tipo} después de ${ultimoTipo}.` }
             }
+        } else if (tipo !== 'ENTRADA') {
+            return { success: false, error: 'El primer registro debe ser una ENTRADA.' }
         }
 
         const { data: insertData, error } = await supabase

@@ -8,7 +8,7 @@ import { getOperacionesActivas } from './operaciones-actions'
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
 const ANIOS = [2024, 2025, 2026]
 
-export function AdminFilters() {
+export function AdminFilters({ rol, operacionFija }: { rol: string; operacionFija: string | null }) {
     const router = useRouter()
     const searchParams = useSearchParams()
 
@@ -161,7 +161,8 @@ export function AdminFilters() {
                 )}
             </div>
 
-            {/* Selector Múltiple de Operaciones */}
+            {/* Selector Múltiple de Operaciones (solo visible para admin) */}
+            {rol !== 'coordinador' && (
             <div className="pt-2 border-t mt-2">
                 <label className="text-sm font-medium text-slate-700 mb-2 block">Filtrar por Operaciones:</label>
                 <div className="relative" ref={dropdownRef}>
@@ -238,6 +239,7 @@ export function AdminFilters() {
                     </div>
                 )}
             </div>
+            )}
 
             <div className="flex justify-end gap-2 mt-4">
                 <Button

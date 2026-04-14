@@ -1,11 +1,16 @@
 import { getOperacionesAdmin } from '../operaciones-actions'
 import { OperacionesClient } from './OperacionesClient'
+import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { redirect } from 'next/navigation'
 
 export const metadata = {
     title: 'Admin - Operaciones',
 }
 
 export default async function OperacionesPage() {
+    const profile = await getUserProfile()
+    requireAdmin(profile)
+
     const { data: operaciones, success, error } = await getOperacionesAdmin()
 
     return (

@@ -2,8 +2,12 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
+import { getUserProfile, requireAdmin, requireAdminOrCoordinador } from '@/lib/auth'
 
 export async function crearNovedad(formData: FormData) {
+    const profile = await getUserProfile()
+    requireAdminOrCoordinador(profile)
+
     const supabase = await createClient()
 
     const usuario_id = formData.get('usuario_id') as string
@@ -16,19 +20,19 @@ export async function crearNovedad(formData: FormData) {
     const endDate = formData.get('endDate') as string
     const causa = formData.get('causa') as string
 
-    if (!usuario_id || !tipo_novedad || !notas) {
+    if (!usuario_id || !tipo_novedad) {
         return { success: false, error: 'Faltan campos obligatorios' }
     }
 
-    // Calcular inicio y fin dependiendo del tipo
+    // Calcular inicio y fin dependiendo de si trae rango o fecha unica
     let start_date = null
     let end_date = null
     let fecha_novedad = null
 
-    if (tipo_novedad === 'incapacidad' && startDate && endDate) {
+    if (startDate && endDate) {
         start_date = new Date(startDate).toISOString().split('T')[0]
         end_date = new Date(endDate).toISOString().split('T')[0]
-        fecha_novedad = start_date // Default
+        fecha_novedad = start_date
     } else if (fecha) {
         fecha_novedad = new Date(fecha).toISOString().split('T')[0]
     } else {
@@ -36,9 +40,14 @@ export async function crearNovedad(formData: FormData) {
     }
 
     // Validation to make sure user exists (Supabase will also enforce via FK)
-    const { data: usuario } = await supabase.from('usuarios').select('id, nombre').eq('id', usuario_id).single()
+    const { data: usuario } = await supabase.from('usuarios').select('id, nombre, operacion').eq('id', usuario_id).single()
     if (!usuario) {
         return { success: false, error: 'La cédula ingresada no corresponde a un empleado válido.' }
+    }
+
+    // Coordinador solo puede crear novedades para empleados de su operación
+    if (profile.rol === 'coordinador' && usuario.operacion !== profile.operacion_nombre) {
+        return { success: false, error: 'Solo puedes crear novedades para empleados de tu operación' }
     }
 
     const { error } = await supabase
@@ -68,6 +77,9 @@ export async function crearNovedad(formData: FormData) {
 }
 
 export async function eliminarNovedad(id: string) {
+    const profile = await getUserProfile()
+    requireAdmin(profile)
+
     const supabase = await createClient()
 
     const { error } = await supabase.from('novedades').delete().eq('id', id)

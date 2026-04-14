@@ -1,15 +1,17 @@
-import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { signout } from '@/app/login/actions'
+import { getUserProfile } from '@/lib/auth'
 import {
     Users,
     Settings,
     Clock,
     LogOut,
     FileText,
-    Briefcase
+    Briefcase,
+    UserCog
 } from 'lucide-react'
 
 export default async function DashboardLayout({
@@ -17,19 +19,17 @@ export default async function DashboardLayout({
 }: {
     children: React.ReactNode
 }) {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const profile = await getUserProfile()
 
-    if (!user) {
-        redirect('/login')
+    // Sin perfil = trabajador o cuenta sin vincular -> solo kiosco
+    if (!profile) {
+        redirect('/')
     }
 
-    // TODO: Fetch user role from profile table later to restrict views
-    // const role = await getUserRole(user.id)
+    const isAdmin = profile.rol === 'admin'
 
     return (
         <div className="flex min-h-screen bg-slate-50/40">
-            {/* Sidebar - Ocultable en móvil próximamente */}
             <aside className="w-64 border-r bg-white p-4 hidden md:flex flex-col gap-4">
                 <div className="flex h-14 items-center font-bold text-xl px-2">
                     Inlotrans
@@ -59,17 +59,39 @@ export default async function DashboardLayout({
                             Administración
                         </Button>
                     </Link>
-                    <Link href="/admin/operaciones">
-                        <Button variant="ghost" className="w-full justify-start gap-2">
-                            <Briefcase className="h-4 w-4" />
-                            Operaciones
-                        </Button>
-                    </Link>
+                    {isAdmin && (
+                        <>
+                            <Link href="/admin/operaciones">
+                                <Button variant="ghost" className="w-full justify-start gap-2">
+                                    <Briefcase className="h-4 w-4" />
+                                    Operaciones
+                                </Button>
+                            </Link>
+                            <Link href="/admin/usuarios">
+                                <Button variant="ghost" className="w-full justify-start gap-2">
+                                    <UserCog className="h-4 w-4" />
+                                    Usuarios
+                                </Button>
+                            </Link>
+                        </>
+                    )}
                 </nav>
                 <div className="border-t pt-4">
-                    <p className="text-sm font-medium px-2 truncate mb-2 text-slate-500">
-                        {user.email}
-                    </p>
+                    <div className="px-2 mb-2">
+                        <p className="text-sm font-medium truncate text-slate-500">
+                            {profile.email}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                            <Badge variant={isAdmin ? 'default' : 'secondary'} className="text-xs">
+                                {profile.rol}
+                            </Badge>
+                            {profile.operacion_nombre && (
+                                <span className="text-xs text-slate-400 truncate">
+                                    {profile.operacion_nombre}
+                                </span>
+                            )}
+                        </div>
+                    </div>
                     <form action={signout}>
                         <Button variant="outline" className="w-full justify-start gap-2 text-red-500 hover:text-red-600 hover:bg-red-50">
                             <LogOut className="h-4 w-4" />
@@ -79,7 +101,6 @@ export default async function DashboardLayout({
                 </div>
             </aside>
 
-            {/* Main content */}
             <main className="flex-1 overflow-y-auto">
                 <div className="container mx-auto p-4 md:p-8">
                     {children}

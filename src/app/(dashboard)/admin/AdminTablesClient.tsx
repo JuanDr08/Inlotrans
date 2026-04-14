@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
     Table,
@@ -35,15 +36,19 @@ export function AdminTablesClient({ grupos }: { grupos: any[] }) {
                                             <TableHead>Empleado</TableHead>
                                             <TableHead>Horas Reales</TableHead>
                                             <TableHead className="w-[300px]">Desglose de Recargos</TableHead>
+                                            {/* Columna de valor monetario comentada por solicitud
                                             <TableHead className="text-right">Total a Pagar</TableHead>
+                                            */}
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {grupo.datos.map((row: any) => (
                                             <TableRow key={row.cedula}>
                                                 <TableCell>
-                                                    <div className="font-medium">{row.nombre}</div>
-                                                    <div className="text-sm text-slate-500">ID: {row.cedula}</div>
+                                                    <Link href={`/empleados/${row.cedula}`} className="hover:underline">
+                                                        <div className="font-medium text-blue-700 hover:text-blue-900">{row.nombre}</div>
+                                                        <div className="text-sm text-slate-500">ID: {row.cedula}</div>
+                                                    </Link>
                                                 </TableCell>
                                                 <TableCell>
                                                     <div className="font-semibold text-lg">{row.horasTotalesFormato}</div>
@@ -88,6 +93,7 @@ export function AdminTablesClient({ grupos }: { grupos: any[] }) {
                                                         )}
                                                     </div>
                                                 </TableCell>
+                                                {/* Valor monetario comentado por solicitud
                                                 <TableCell className="text-right">
                                                     <div className="font-bold text-lg text-emerald-600">
                                                         ${row.valorTotal.toLocaleString('es-CO')}
@@ -96,6 +102,7 @@ export function AdminTablesClient({ grupos }: { grupos: any[] }) {
                                                         Base: ${row.detalleValores.normal.toLocaleString('es-CO')}
                                                     </div>
                                                 </TableCell>
+                                                */}
                                             </TableRow>
                                         ))}
                                     </TableBody>

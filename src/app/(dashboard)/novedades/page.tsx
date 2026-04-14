@@ -11,18 +11,29 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { NovedadesForm } from './NovedadesForm'
+import { DeleteNovedadButton } from './DeleteNovedadButton'
 import Link from 'next/link'
+import { getUserProfile } from '@/lib/auth'
+import { redirect } from 'next/navigation'
 
 export default async function NovedadesPage() {
+    const profile = await getUserProfile()
+    if (!profile) redirect('/')
+
     const supabase = await createClient()
 
-    const { data: novedades } = await supabase
+    const { data: novedadesRaw } = await supabase
         .from('novedades')
         .select(`
             *,
-            usuario:usuarios(nombre)
+            usuario:usuarios(nombre, operacion)
         `)
         .order('fecha_inicio', { ascending: false })
+
+    let novedades = novedadesRaw
+    if (profile.rol === 'coordinador') {
+        novedades = novedades?.filter(n => n.usuario?.operacion === profile.operacion_nombre) ?? []
+    }
 
     return (
         <div className="space-y-6">
@@ -40,7 +51,7 @@ export default async function NovedadesPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                 <div className="col-span-1">
-                    <NovedadesForm />
+                    <NovedadesForm rol={profile.rol} />
                 </div>
 
                 <div className="col-span-1 lg:col-span-2">
@@ -58,12 +69,13 @@ export default async function NovedadesPage() {
                                             <TableHead>Tipo / Concepto</TableHead>
                                             <TableHead>Justificación</TableHead>
                                             <TableHead className="text-right">Afecta Planilla</TableHead>
+                                            {profile.rol === 'admin' && <TableHead className="text-right">Acciones</TableHead>}
                                         </TableRow>
                                     </TableHeader>
                                     <TableBody>
                                         {novedades?.length === 0 && (
                                             <TableRow>
-                                                <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
+                                                <TableCell colSpan={profile.rol === 'admin' ? 6 : 5} className="text-center py-8 text-muted-foreground">
                                                     No hay novedades recientes registradas.
                                                 </TableCell>
                                             </TableRow>
@@ -111,6 +123,11 @@ export default async function NovedadesPage() {
                                                         <Badge variant="outline" className="text-slate-500 bg-slate-50">No</Badge>
                                                     )}
                                                 </TableCell>
+                                                {profile.rol === 'admin' && (
+                                                    <TableCell className="text-right">
+                                                        <DeleteNovedadButton id={nov.id} />
+                                                    </TableCell>
+                                                )}
                                             </TableRow>
                                         ))}
                                     </TableBody>

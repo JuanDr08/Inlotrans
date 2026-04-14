@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server'
 import { calcularHorasTodosUsuariosPorPeriodo } from '@/lib/calculoHoras'
+import { getUserProfile } from '@/lib/auth'
 import * as xlsx from 'xlsx'
 
 export async function GET(request: Request) {
     try {
+        const profile = await getUserProfile()
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+        }
+
         const { searchParams } = new URL(request.url)
 
         let start = new Date()
@@ -32,8 +38,11 @@ export async function GET(request: Request) {
 
         end.setHours(23, 59, 59, 999)
 
+        // Coordinador: forzar su operacion. Admin: respetar param.
         const opParam = searchParams.get('op')
-        const operaciones = opParam ? opParam.split(',') : []
+        const operaciones = profile.rol === 'coordinador' && profile.operacion_nombre
+            ? [profile.operacion_nombre]
+            : (opParam ? opParam.split(',') : [])
 
         const datos = await calcularHorasTodosUsuariosPorPeriodo(start, end, operaciones)
 

@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/table"
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Edit2, Ban, CheckCircle, Search } from 'lucide-react'
+import { Edit2, Ban, CheckCircle, Search, Eye } from 'lucide-react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,13 +19,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { editarEmpleado, cambiarEstadoEmpleado } from './actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 
 export function EmpleadosTable({
     empleados,
-    operaciones
+    operaciones,
+    rol
 }: {
     empleados: any[],
-    operaciones: { id: string, nombre: string }[]
+    operaciones: { id: string, nombre: string }[],
+    rol: string
 }) {
     const router = useRouter()
     const [editingEmp, setEditingEmp] = useState<any>(null)
@@ -37,6 +40,8 @@ export function EmpleadosTable({
     const [editCargo, setEditCargo] = useState('')
     const [editOp, setEditOp] = useState('')
     const [editStatus, setEditStatus] = useState('')
+    const [editCedula, setEditCedula] = useState('')
+    const [editSalario, setEditSalario] = useState('')
 
     const openEditDialog = (emp: any) => {
         setEditingEmp(emp)
@@ -44,6 +49,8 @@ export function EmpleadosTable({
         setEditCargo(emp.cargo)
         setEditOp(emp.operacion)
         setEditStatus(emp.status)
+        setEditCedula(emp.id)
+        setEditSalario(emp.salario?.toString() || '')
     }
 
     const handleSave = async (e: React.FormEvent) => {
@@ -53,10 +60,12 @@ export function EmpleadosTable({
         setIsSaving(true)
         const formData = new FormData()
         formData.append('cedula', editingEmp.id)
+        formData.append('nueva_cedula', editCedula)
         formData.append('nombre', editNombre)
         formData.append('cargo', editCargo)
         formData.append('operacion', editOp)
         formData.append('status', editStatus)
+        formData.append('salario', editSalario)
 
         const result = await editarEmpleado(formData)
 
@@ -120,8 +129,10 @@ export function EmpleadosTable({
                         <TableRow key={emp.id}>
                             <TableCell className="font-semibold">{emp.id}</TableCell>
                             <TableCell>
-                                <div className="font-medium text-sm">{emp.nombre}</div>
-                                <div className="text-xs text-muted-foreground">{emp.cargo}</div>
+                                <Link href={`/empleados/${emp.id}`} className="hover:underline">
+                                    <div className="font-medium text-sm text-blue-700 hover:text-blue-900">{emp.nombre}</div>
+                                    <div className="text-xs text-muted-foreground">{emp.cargo}</div>
+                                </Link>
                             </TableCell>
                             <TableCell>{emp.operacion}</TableCell>
                             <TableCell>
@@ -133,6 +144,16 @@ export function EmpleadosTable({
                             </TableCell>
                             <TableCell className="text-right">
                                 <div className="flex justify-end gap-2">
+                                    <Link href={`/empleados/${emp.id}`}>
+                                        <Button
+                                            variant="ghost"
+                                            size="icon"
+                                            className="text-purple-600 hover:text-purple-700 hover:bg-purple-50"
+                                            title="Ver detalle"
+                                        >
+                                            <Eye className="h-4 w-4" />
+                                        </Button>
+                                    </Link>
                                     <Button
                                         variant="ghost"
                                         size="icon"
@@ -166,8 +187,8 @@ export function EmpleadosTable({
                     {editingEmp && (
                         <form onSubmit={handleSave} className="space-y-4 py-4">
                             <div className="space-y-2">
-                                <Label>Cédula</Label>
-                                <Input value={editingEmp.id} readOnly disabled className="bg-slate-50" />
+                                <Label htmlFor="edit-cedula">Cédula</Label>
+                                <Input id="edit-cedula" value={editCedula} onChange={e => setEditCedula(e.target.value)} required />
                             </div>
 
                             <div className="space-y-2">
@@ -206,6 +227,18 @@ export function EmpleadosTable({
                                         <SelectItem value="inactivo">Inactivo</SelectItem>
                                     </SelectContent>
                                 </Select>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label htmlFor="edit-salario">Salario Mensual</Label>
+                                <Input
+                                    id="edit-salario"
+                                    type="number"
+                                    value={editSalario}
+                                    onChange={e => setEditSalario(e.target.value)}
+                                    placeholder="Ej. 1300000"
+                                    min="0"
+                                />
                             </div>
 
                             <div className="pt-4 flex justify-end gap-2">

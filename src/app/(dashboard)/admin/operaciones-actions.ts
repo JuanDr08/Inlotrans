@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { unstable_cache } from 'next/cache'
+import { getUserProfile, requireAdmin } from '@/lib/auth'
 
 // Interfaz para la operación
 export type Operacion = {
@@ -12,8 +13,19 @@ export type Operacion = {
     created_at?: string
 }
 
+// Interfaz para turnos
+export type Turno = {
+    id: string
+    operacion_id: string
+    nombre: string
+    hora_inicio: string // TIME format 'HH:MM'
+    hora_fin: string
+    created_at?: string
+}
+
 // 1. Fetch de todas las operaciones (Admin)
 export async function getOperacionesAdmin() {
+    requireAdmin(await getUserProfile())
     const supabase = await createClient()
     const { data, error } = await supabase
         .from('operaciones')
@@ -56,6 +68,7 @@ export const getOperacionesActivas = unstable_cache(
 
 // 3. Crear o Actualizar
 export async function upsertOperacion(operacion: Partial<Operacion>) {
+    requireAdmin(await getUserProfile())
     const supabase = await createClient()
 
     if (operacion.id) {
@@ -86,8 +99,85 @@ export async function upsertOperacion(operacion: Partial<Operacion>) {
     return { success: true }
 }
 
+// =============================================
+// TURNOS
+// =============================================
+
+export async function getTurnosPorOperacion(operacionId: string) {
+    requireAdmin(await getUserProfile())
+    const supabase = await createClient()
+
+    const { data, error } = await supabase
+        .from('turnos')
+        .select('*')
+        .eq('operacion_id', operacionId)
+        .order('hora_inicio', { ascending: true })
+
+    if (error) return { success: false, error: error.message }
+    return { success: true, data: data as Turno[] }
+}
+
+// Buscar turnos por nombre de operacion (usado en formulario de empleados)
+export async function getTurnosPorNombreOperacion(nombreOperacion: string) {
+    const supabase = await createClient()
+
+    // Primero obtener el ID de la operacion
+    const { data: op } = await supabase
+        .from('operaciones')
+        .select('id')
+        .eq('nombre', nombreOperacion)
+        .single()
+
+    if (!op) return { success: true, data: [] as Turno[] }
+
+    const { data, error } = await supabase
+        .from('turnos')
+        .select('*')
+        .eq('operacion_id', op.id)
+        .order('hora_inicio', { ascending: true })
+
+    if (error) return { success: false, data: [] as Turno[] }
+    return { success: true, data: data as Turno[] }
+}
+
+export async function crearTurno(turno: { operacion_id: string; nombre: string; hora_inicio: string; hora_fin: string }) {
+    requireAdmin(await getUserProfile())
+    const supabase = await createClient()
+
+    if (!turno.nombre?.trim() || !turno.hora_inicio || !turno.hora_fin) {
+        return { success: false, error: 'Todos los campos del turno son obligatorios' }
+    }
+
+    const { error } = await supabase.from('turnos').insert(turno)
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+}
+
+export async function editarTurno(id: string, turno: { nombre: string; hora_inicio: string; hora_fin: string }) {
+    requireAdmin(await getUserProfile())
+    const supabase = await createClient()
+
+    const { error } = await supabase
+        .from('turnos')
+        .update({ nombre: turno.nombre, hora_inicio: turno.hora_inicio, hora_fin: turno.hora_fin })
+        .eq('id', id)
+
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+}
+
+export async function eliminarTurno(id: string) {
+    requireAdmin(await getUserProfile())
+    const supabase = await createClient()
+
+    const { error } = await supabase.from('turnos').delete().eq('id', id)
+    if (error) return { success: false, error: error.message }
+    return { success: true }
+}
+
 // 4. Eliminar
 export async function deleteOperacion(id: string) {
+    requireAdmin(await getUserProfile())
     const supabase = await createClient()
     const { error } = await supabase
         .from('operaciones')

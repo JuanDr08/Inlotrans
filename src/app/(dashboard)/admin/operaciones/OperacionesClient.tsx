@@ -1,13 +1,18 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Operacion, upsertOperacion, deleteOperacion } from '../operaciones-actions'
-import { Plus, Edit2, Trash2 } from 'lucide-react'
+import {
+    Operacion, Turno,
+    upsertOperacion, deleteOperacion,
+    getTurnosPorOperacion, crearTurno, editarTurno, eliminarTurno
+} from '../operaciones-actions'
+import { Plus, Edit2, Trash2, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
     Table,
     TableBody,
@@ -31,6 +36,14 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
     const [loading, setLoading] = useState(false)
     const [form, setForm] = useState<Partial<Operacion>>({})
 
+    // Turnos state
+    const [turnosModal, setTurnosModal] = useState<string | null>(null) // operacion_id
+    const [turnosModalNombre, setTurnosModalNombre] = useState('')
+    const [turnos, setTurnos] = useState<Turno[]>([])
+    const [turnoForm, setTurnoForm] = useState<{ nombre: string; hora_inicio: string; hora_fin: string }>({ nombre: '', hora_inicio: '', hora_fin: '' })
+    const [editingTurnoId, setEditingTurnoId] = useState<string | null>(null)
+    const [turnosLoading, setTurnosLoading] = useState(false)
+
     const handleOpenModal = (op?: Operacion) => {
         if (op) {
             setForm({ ...op })
@@ -49,10 +62,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
         if (success) {
             toast.success(form.id ? 'Operación actualizada' : 'Operación creada')
             setOpenModal(false)
-            // Recargar datos desde server component
             router.refresh()
-            // Si quieres optimista:
-            // setData(prev => ...)
         } else {
             toast.error(error || 'Error al guardar')
         }
@@ -69,6 +79,72 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
             router.refresh()
         } else {
             toast.error(error || 'Hubo un error', { id: toastId })
+        }
+    }
+
+    // Turnos handlers
+    const openTurnosModal = async (op: Operacion) => {
+        setTurnosModal(op.id)
+        setTurnosModalNombre(op.nombre)
+        setTurnosLoading(true)
+        const res = await getTurnosPorOperacion(op.id)
+        if (res.success && res.data) {
+            setTurnos(res.data)
+        } else {
+            setTurnos([])
+        }
+        setTurnosLoading(false)
+    }
+
+    const resetTurnoForm = () => {
+        setTurnoForm({ nombre: '', hora_inicio: '', hora_fin: '' })
+        setEditingTurnoId(null)
+    }
+
+    const handleSaveTurno = async (e: React.FormEvent) => {
+        e.preventDefault()
+        if (!turnoForm.nombre.trim() || !turnoForm.hora_inicio || !turnoForm.hora_fin) {
+            return toast.error('Todos los campos del turno son obligatorios')
+        }
+
+        setTurnosLoading(true)
+        let result
+
+        if (editingTurnoId) {
+            result = await editarTurno(editingTurnoId, turnoForm)
+        } else {
+            result = await crearTurno({ operacion_id: turnosModal!, ...turnoForm })
+        }
+
+        if (result.success) {
+            toast.success(editingTurnoId ? 'Turno actualizado' : 'Turno creado')
+            resetTurnoForm()
+            // Refrescar turnos
+            const res = await getTurnosPorOperacion(turnosModal!)
+            if (res.success && res.data) setTurnos(res.data)
+        } else {
+            toast.error(result.error || 'Error al guardar turno')
+        }
+        setTurnosLoading(false)
+    }
+
+    const handleEditTurno = (turno: Turno) => {
+        setEditingTurnoId(turno.id)
+        setTurnoForm({
+            nombre: turno.nombre,
+            hora_inicio: turno.hora_inicio.slice(0, 5), // HH:MM
+            hora_fin: turno.hora_fin.slice(0, 5)
+        })
+    }
+
+    const handleDeleteTurno = async (id: string, nombre: string) => {
+        if (!confirm(`¿Eliminar el turno "${nombre}"?`)) return
+        const result = await eliminarTurno(id)
+        if (result.success) {
+            toast.success('Turno eliminado')
+            setTurnos(prev => prev.filter(t => t.id !== id))
+        } else {
+            toast.error(result.error || 'Error al eliminar turno')
         }
     }
 
@@ -112,6 +188,9 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                                         {op.created_at ? new Date(op.created_at).toLocaleDateString() : '-'}
                                     </TableCell>
                                     <TableCell className="text-right space-x-2">
+                                        <Button variant="outline" size="sm" onClick={() => openTurnosModal(op)} title="Gestionar turnos">
+                                            <Clock className="h-4 w-4 text-purple-600" />
+                                        </Button>
                                         <Button variant="outline" size="sm" onClick={() => handleOpenModal(op)}>
                                             <Edit2 className="h-4 w-4 text-blue-600" />
                                         </Button>
@@ -134,6 +213,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                 </div>
             </CardContent>
 
+            {/* Modal: Crear/Editar Operación */}
             <Dialog open={openModal} onOpenChange={setOpenModal}>
                 <DialogContent>
                     <DialogHeader>
@@ -171,6 +251,101 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                             </Button>
                         </div>
                     </form>
+                </DialogContent>
+            </Dialog>
+
+            {/* Modal: Gestión de Turnos */}
+            <Dialog open={!!turnosModal} onOpenChange={(open) => { if (!open) { setTurnosModal(null); resetTurnoForm() } }}>
+                <DialogContent className="sm:max-w-lg">
+                    <DialogHeader>
+                        <DialogTitle>Turnos — {turnosModalNombre}</DialogTitle>
+                    </DialogHeader>
+
+                    <div className="space-y-4 pt-2">
+                        {/* Formulario para agregar/editar turno */}
+                        <form onSubmit={handleSaveTurno} className="space-y-3 p-3 border rounded-lg bg-slate-50">
+                            <p className="text-sm font-medium text-slate-700">
+                                {editingTurnoId ? 'Editar turno' : 'Agregar turno'}
+                            </p>
+                            <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                    <Label className="text-xs">Nombre</Label>
+                                    <Input
+                                        placeholder="Ej. Mañana"
+                                        value={turnoForm.nombre}
+                                        onChange={e => setTurnoForm({ ...turnoForm, nombre: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Hora Inicio</Label>
+                                    <Input
+                                        type="time"
+                                        value={turnoForm.hora_inicio}
+                                        onChange={e => setTurnoForm({ ...turnoForm, hora_inicio: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <Label className="text-xs">Hora Fin</Label>
+                                    <Input
+                                        type="time"
+                                        value={turnoForm.hora_fin}
+                                        onChange={e => setTurnoForm({ ...turnoForm, hora_fin: e.target.value })}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div className="flex gap-2">
+                                <Button type="submit" size="sm" disabled={turnosLoading}>
+                                    {editingTurnoId ? 'Actualizar' : 'Agregar'}
+                                </Button>
+                                {editingTurnoId && (
+                                    <Button type="button" size="sm" variant="ghost" onClick={resetTurnoForm}>
+                                        Cancelar
+                                    </Button>
+                                )}
+                            </div>
+                        </form>
+
+                        {/* Lista de turnos existentes */}
+                        <div className="rounded-md border">
+                            <Table>
+                                <TableHeader>
+                                    <TableRow>
+                                        <TableHead>Turno</TableHead>
+                                        <TableHead>Horario</TableHead>
+                                        <TableHead className="text-right">Acciones</TableHead>
+                                    </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                    {turnos.length === 0 && (
+                                        <TableRow>
+                                            <TableCell colSpan={3} className="text-center py-4 text-muted-foreground text-sm">
+                                                {turnosLoading ? 'Cargando...' : 'No hay turnos configurados'}
+                                            </TableCell>
+                                        </TableRow>
+                                    )}
+                                    {turnos.map(turno => (
+                                        <TableRow key={turno.id}>
+                                            <TableCell className="font-medium text-sm">{turno.nombre}</TableCell>
+                                            <TableCell className="text-sm">
+                                                {turno.hora_inicio.slice(0, 5)} — {turno.hora_fin.slice(0, 5)}
+                                            </TableCell>
+                                            <TableCell className="text-right space-x-1">
+                                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleEditTurno(turno)}>
+                                                    <Edit2 className="h-3 w-3 text-blue-600" />
+                                                </Button>
+                                                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => handleDeleteTurno(turno.id, turno.nombre)}>
+                                                    <Trash2 className="h-3 w-3 text-red-600" />
+                                                </Button>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))}
+                                </TableBody>
+                            </Table>
+                        </div>
+                    </div>
                 </DialogContent>
             </Dialog>
         </Card>

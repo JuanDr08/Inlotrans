@@ -4,12 +4,17 @@ import { AdminFilters } from './AdminFilters'
 import { AdminExcelButton } from './AdminExcelButton'
 import { AdminTablesClient } from './AdminTablesClient'
 import { Suspense } from 'react'
+import { getUserProfile } from '@/lib/auth'
+import { redirect } from 'next/navigation'
 
 export default async function AdminPage({
     searchParams,
 }: {
     searchParams: Promise<{ start?: string; end?: string; op?: string; mes?: string; anio?: string; periodo?: string }>
 }) {
+    const profile = await getUserProfile()
+    if (!profile) redirect('/')
+
     const pParams = await searchParams
 
     let grupos: { nombre: string, start: Date, end: Date }[] = []
@@ -33,7 +38,9 @@ export default async function AdminPage({
         }
     }
 
-    const operaciones = pParams.op ? pParams.op.split(',') : []
+    const operaciones = profile.rol === 'coordinador'
+        ? [profile.operacion_nombre!]
+        : (pParams.op ? pParams.op.split(',') : [])
 
     const gruposConDatos = await Promise.all(grupos.map(async (g) => {
         const rawDatos = await calcularHorasTodosUsuariosPorPeriodoOptimizado(g.start, g.end, operaciones)
@@ -65,7 +72,7 @@ export default async function AdminPage({
             </div>
 
             <Suspense fallback={<div className="h-9 w-full animate-pulse bg-slate-200 rounded-md mb-6" />}>
-                <AdminFilters />
+                <AdminFilters rol={profile.rol} operacionFija={profile.operacion_nombre} />
             </Suspense>
 
             <AdminTablesClient grupos={gruposConDatos} />

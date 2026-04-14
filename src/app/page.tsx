@@ -10,11 +10,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner'
 import { Camera } from 'lucide-react'
 
+type TipoRegistro = 'ENTRADA' | 'SALIDA' | 'PAUSA_INICIO' | 'PAUSA_FIN'
+
 export default function KioskoPage() {
   const [cedula, setCedula] = useState('')
   const [nombre, setNombre] = useState('')
-  const [tipo, setTipo] = useState<'ENTRADA' | 'SALIDA'>('ENTRADA')
+  const [tipo, setTipo] = useState<TipoRegistro>('ENTRADA')
   const [operacion, setOperacion] = useState('')
+  const [estadoTurno, setEstadoTurno] = useState<'sin_turno' | 'trabajando' | 'en_pausa'>('sin_turno')
+  const [ultimoRegistroInfo, setUltimoRegistroInfo] = useState<string | null>(null)
 
   const [isLoading, setIsLoading] = useState(false)
   const [fotoFile, setFotoFile] = useState<File | null>(null)
@@ -22,6 +26,9 @@ export default function KioskoPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [opcionesOp, setOpcionesOp] = useState<{ id: string, nombre: string }[]>([])
+
+  // Determinar si el tipo actual requiere foto
+  const requiereFoto = tipo === 'ENTRADA' || tipo === 'SALIDA'
 
   useEffect(() => {
     async function loadOps() {
@@ -33,10 +40,12 @@ export default function KioskoPage() {
     loadOps()
   }, [])
 
-  // Debounce cedula searching
+  // Debounce cedula searching + determinar estado del turno
   useEffect(() => {
     if (!cedula) {
       setNombre('')
+      setEstadoTurno('sin_turno')
+      setUltimoRegistroInfo(null)
       return
     }
 
@@ -44,13 +53,40 @@ export default function KioskoPage() {
       const res = await validarCedula(cedula)
       if (res.success && res.data) {
         setNombre(res.data.nombre)
-        // Auto-asignamos la operación base del usuario si no hay una pre-seleccionada o si cambia
         if (res.data.operacion) {
           setOperacion(res.data.operacion)
+        }
+
+        // Consultar ultimo registro para determinar estado
+        const ultimoRes = await getUltimoRegistro(cedula)
+        if (ultimoRes.success && ultimoRes.data) {
+          const ultimoTipo = ultimoRes.data.tipo as TipoRegistro
+          const fechaHora = new Date(ultimoRes.data.fecha_hora)
+          const horaStr = fechaHora.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+
+          if (ultimoTipo === 'ENTRADA' || ultimoTipo === 'PAUSA_FIN') {
+            setEstadoTurno('trabajando')
+            setTipo('SALIDA')
+            setUltimoRegistroInfo(`En turno desde ${horaStr}`)
+          } else if (ultimoTipo === 'PAUSA_INICIO') {
+            setEstadoTurno('en_pausa')
+            setTipo('PAUSA_FIN')
+            setUltimoRegistroInfo(`En pausa desde ${horaStr}`)
+          } else {
+            setEstadoTurno('sin_turno')
+            setTipo('ENTRADA')
+            setUltimoRegistroInfo(null)
+          }
+        } else {
+          setEstadoTurno('sin_turno')
+          setTipo('ENTRADA')
+          setUltimoRegistroInfo(null)
         }
       } else {
         setNombre('')
         setOperacion('')
+        setEstadoTurno('sin_turno')
+        setUltimoRegistroInfo(null)
         toast.error(res.error || 'Cédula no válida')
       }
     }, 600)
@@ -132,21 +168,22 @@ export default function KioskoPage() {
       return
     }
 
-    if (tipo === 'SALIDA' && !operacion) {
-      toast.error('Debe seleccionar la operación para la SALIDA.')
+    if (!operacion) {
+      toast.error('Debe seleccionar la operación.')
       return
     }
 
-    if (!fotoFile) {
+    if (requiereFoto && !fotoFile) {
       toast.error('Es obligatorio tomar una fotografía para el registro.')
       return
     }
 
     setIsLoading(true)
-    const toastId = toast.loading('Registrando tu asistencia...')
+    const tipoLabel = tipo === 'PAUSA_INICIO' ? 'PAUSA' : tipo === 'PAUSA_FIN' ? 'REANUDACIÓN' : tipo
+    const toastId = toast.loading(`Registrando ${tipoLabel}...`)
 
     try {
-      let base64Image = ''
+      let base64Image: string | null = null
       if (fotoFile) {
         base64Image = await convertirImagenABase64(fotoFile)
       }
@@ -166,14 +203,25 @@ export default function KioskoPage() {
         return
       }
 
-      toast.success(`¡${tipo} registrada correctamente para ${nombre.split(' ')[0]}!`, { id: toastId, duration: 5000 })
+      toast.success(`¡${tipoLabel} registrada correctamente para ${nombre.split(' ')[0]}!`, { id: toastId, duration: 5000 })
 
-      // Limpiar formulario si fue exitoso
+      // Limpiar formulario si fue SALIDA (turno cerrado). Para pausas, mantener cedula.
       setTimeout(() => {
-        setCedula('')
-        setNombre('')
-        setOperacion('')
-        setTipo('ENTRADA')
+        if (tipo === 'SALIDA') {
+          setCedula('')
+          setNombre('')
+          setOperacion('')
+          setTipo('ENTRADA')
+          setEstadoTurno('sin_turno')
+          setUltimoRegistroInfo(null)
+        } else {
+          // Refrescar estado del turno sin limpiar cedula
+          setCedula(prev => {
+            // Force re-trigger del useEffect
+            return prev + ' '
+          })
+          setTimeout(() => setCedula(prev => prev.trim()), 50)
+        }
         setFotoFile(null)
         setFotoPreview(null)
         if (fileInputRef.current) {
@@ -221,24 +269,53 @@ export default function KioskoPage() {
 
             <div className="space-y-2 pt-2">
               <Label>Tipo de Registro</Label>
-              <div className="grid grid-cols-2 gap-4">
-                <Button
-                  type="button"
-                  variant={tipo === 'ENTRADA' ? 'default' : 'outline'}
-                  className={tipo === 'ENTRADA' ? 'bg-blue-600 hover:bg-blue-700' : ''}
-                  onClick={() => setTipo('ENTRADA')}
-                >
-                  ENTRADA
-                </Button>
-                <Button
-                  type="button"
-                  variant={tipo === 'SALIDA' ? 'default' : 'outline'}
-                  className={tipo === 'SALIDA' ? 'bg-red-600 hover:bg-red-700' : ''}
-                  onClick={() => setTipo('SALIDA')}
-                >
-                  SALIDA
-                </Button>
-              </div>
+              {ultimoRegistroInfo && (
+                <p className="text-sm font-medium text-slate-600 bg-slate-100 px-3 py-1.5 rounded-md">
+                  {ultimoRegistroInfo}
+                </p>
+              )}
+              {estadoTurno === 'sin_turno' && (
+                <div className="grid grid-cols-1 gap-4">
+                  <Button
+                    type="button"
+                    className="bg-blue-600 hover:bg-blue-700 py-6 text-lg"
+                    onClick={() => setTipo('ENTRADA')}
+                  >
+                    ENTRADA
+                  </Button>
+                </div>
+              )}
+              {estadoTurno === 'trabajando' && (
+                <div className="grid grid-cols-2 gap-4">
+                  <Button
+                    type="button"
+                    variant={tipo === 'PAUSA_INICIO' ? 'default' : 'outline'}
+                    className={tipo === 'PAUSA_INICIO' ? 'bg-amber-500 hover:bg-amber-600' : 'border-amber-500 text-amber-600 hover:bg-amber-50'}
+                    onClick={() => setTipo('PAUSA_INICIO')}
+                  >
+                    PAUSA
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={tipo === 'SALIDA' ? 'default' : 'outline'}
+                    className={tipo === 'SALIDA' ? 'bg-red-600 hover:bg-red-700' : 'border-red-500 text-red-600 hover:bg-red-50'}
+                    onClick={() => setTipo('SALIDA')}
+                  >
+                    SALIDA
+                  </Button>
+                </div>
+              )}
+              {estadoTurno === 'en_pausa' && (
+                <div className="grid grid-cols-1 gap-4">
+                  <Button
+                    type="button"
+                    className="bg-emerald-600 hover:bg-emerald-700 py-6 text-lg"
+                    onClick={() => setTipo('PAUSA_FIN')}
+                  >
+                    REANUDAR
+                  </Button>
+                </div>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -256,29 +333,31 @@ export default function KioskoPage() {
               </Select>
             </div>
 
-            <div className="space-y-2">
-              <Label>Captura Fotográfica</Label>
-              <label
-                className="flex items-center justify-center gap-2 w-full p-4 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition"
-              >
-                <Camera className="w-5 h-5 text-slate-500" />
-                <span className="text-sm font-medium text-slate-600">Tomar Foto</span>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={handleFotoChange}
-                />
-              </label>
+            {requiereFoto && (
+              <div className="space-y-2">
+                <Label>Captura Fotográfica</Label>
+                <label
+                  className="flex items-center justify-center gap-2 w-full p-4 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:bg-slate-50 transition"
+                >
+                  <Camera className="w-5 h-5 text-slate-500" />
+                  <span className="text-sm font-medium text-slate-600">Tomar Foto</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={handleFotoChange}
+                  />
+                </label>
 
-              {fotoPreview && (
-                <div className="mt-3 rounded-lg overflow-hidden border border-slate-200">
-                  <img src={fotoPreview} alt="Preview" className="w-full h-auto object-cover max-h-48" />
-                </div>
-              )}
-            </div>
+                {fotoPreview && (
+                  <div className="mt-3 rounded-lg overflow-hidden border border-slate-200">
+                    <img src={fotoPreview} alt="Preview" className="w-full h-auto object-cover max-h-48" />
+                  </div>
+                )}
+              </div>
+            )}
 
             <Button
               type="submit"

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getUserProfile } from '@/lib/auth'
 import { generarExcelExtras } from '@/lib/excel/extras'
 import { generarExcelAusentismos } from '@/lib/excel/ausentismos'
 import { generarExcelAuxilios } from '@/lib/excel/auxilios'
@@ -7,6 +8,11 @@ import { generarExcelIncapacidades } from '@/lib/excel/incapacidades'
 
 export async function GET(request: Request) {
     try {
+        const profile = await getUserProfile()
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
+        }
+
         const { searchParams } = new URL(request.url)
         const tipoPlan = searchParams.get('tipoPlan')
         const mesStr = searchParams.get('mes')
@@ -31,12 +37,6 @@ export async function GET(request: Request) {
         let anio = parseInt(anioStr, 10)
 
         const supabase = await createClient()
-
-        // Verificar sesión de Admin
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
-            return NextResponse.json({ error: 'No autorizado' }, { status: 401 })
-        }
 
         let buffer: ArrayBuffer
 
