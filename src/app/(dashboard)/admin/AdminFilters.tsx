@@ -3,44 +3,54 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { getOperacionesActivas } from './operaciones-actions'
+import { Filter, RotateCcw, Check, X, ChevronDown } from 'lucide-react'
 
-const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-const ANIOS = [2024, 2025, 2026]
+type TipoPeriodo = 'quincenal' | 'semanal' | 'mensual' | 'personalizado'
 
-export function AdminFilters({ rol, operacionFija }: { rol: string; operacionFija: string | null }) {
+/**
+ * Dado un tipo de período y un mes/año base, retorna el rango ISO YYYY-MM-DD.
+ * Para períodos agrupados se usa el mes completo; la página lo va a partir.
+ */
+function defaultRange(tipo: TipoPeriodo, mes: number, anio: number): { start: string; end: string } {
+    const inicio = new Date(anio, mes, 1)
+    const fin = new Date(anio, mes + 1, 0)
+    return {
+        start: inicio.toISOString().slice(0, 10),
+        end: fin.toISOString().slice(0, 10),
+    }
+}
+
+export function AdminFilters({ rol }: { rol: string; operacionFija: string | null }) {
     const router = useRouter()
     const searchParams = useSearchParams()
 
-    const [isLoading, setIsLoading] = useState(false)
+    const now = new Date()
+    const initialMes = parseInt(searchParams.get('mes') ?? String(now.getMonth()))
+    const initialAnio = parseInt(searchParams.get('anio') ?? String(now.getFullYear()))
+    const initialPeriodo = (searchParams.get('periodo') as TipoPeriodo) || 'quincenal'
+
+    const defaults = defaultRange(initialPeriodo, initialMes, initialAnio)
+
+    const [periodo, setPeriodo] = useState<TipoPeriodo>(initialPeriodo)
+    const [start, setStart] = useState(searchParams.get('start') || defaults.start)
+    const [end, setEnd] = useState(searchParams.get('end') || defaults.end)
+    const [operacionesSeleccionadas, setOperacionesSeleccionadas] = useState<string[]>(
+        searchParams.get('op') ? searchParams.get('op')!.split(',') : [],
+    )
+    const [listaOperaciones, setListaOperaciones] = useState<{ id: string; nombre: string }[]>([])
     const [dropdownOpen, setDropdownOpen] = useState(false)
+    const [isLoading, setIsLoading] = useState(false)
+
     const dropdownRef = useRef<HTMLDivElement>(null)
 
-    // Valores iniciales
-    const now = new Date()
-    const [mes, setMes] = useState(searchParams.get('mes') || now.getMonth().toString())
-    const [anio, setAnio] = useState(searchParams.get('anio') || now.getFullYear().toString())
-    const [periodo, setPeriodo] = useState(searchParams.get('periodo') || 'quincenal')
-
-    const [start, setStart] = useState(searchParams.get('start') || '')
-    const [end, setEnd] = useState(searchParams.get('end') || '')
-
-    const [operacionesSeleccionadas, setOperacionesSeleccionadas] = useState<string[]>(
-        searchParams.get('op') ? searchParams.get('op')!.split(',') : []
-    )
-    const [listaOperaciones, setListaOperaciones] = useState<{ id: string, nombre: string }[]>([])
-
     useEffect(() => {
-        async function fetchOps() {
-            const res = await getOperacionesActivas()
-            if (res.success && res.data) {
-                setListaOperaciones(res.data)
-            }
-        }
-        fetchOps()
+        getOperacionesActivas().then((res) => {
+            if (res.success && res.data) setListaOperaciones(res.data)
+        })
     }, [])
 
-    // Close dropdown when clicking outside
     useEffect(() => {
         function handleClickOutside(event: MouseEvent) {
             if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -51,27 +61,36 @@ export function AdminFilters({ rol, operacionFija }: { rol: string; operacionFij
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [])
 
+    // Cuando cambia el tipo de período, ajustar el rango a valores coherentes
+    function handlePeriodoChange(p: TipoPeriodo) {
+        setPeriodo(p)
+        if (p !== 'personalizado') {
+            const d = new Date(start)
+            const rango = defaultRange(p, d.getMonth(), d.getFullYear())
+            setStart(rango.start)
+            setEnd(rango.end)
+        }
+    }
+
     const toggleOperacion = (opNombre: string) => {
-        setOperacionesSeleccionadas(prev =>
-            prev.includes(opNombre)
-                ? prev.filter(o => o !== opNombre)
-                : [...prev, opNombre]
+        setOperacionesSeleccionadas((prev) =>
+            prev.includes(opNombre) ? prev.filter((o) => o !== opNombre) : [...prev, opNombre],
         )
     }
 
     const handleApply = () => {
         setIsLoading(true)
         const params = new URLSearchParams()
+        const d = new Date(start)
 
-        params.set('mes', mes)
-        params.set('anio', anio)
+        params.set('mes', String(d.getMonth()))
+        params.set('anio', String(d.getFullYear()))
         params.set('periodo', periodo)
 
         if (periodo === 'personalizado') {
-            if (start) params.set('start', start)
-            if (end) params.set('end', end)
+            params.set('start', start)
+            params.set('end', end)
         }
-
         if (operacionesSeleccionadas.length > 0) {
             params.set('op', operacionesSeleccionadas.join(','))
         }
@@ -82,182 +101,183 @@ export function AdminFilters({ rol, operacionFija }: { rol: string; operacionFij
 
     const handleReset = () => {
         setIsLoading(true)
-        setMes(now.getMonth().toString())
-        setAnio(now.getFullYear().toString())
+        const rango = defaultRange('quincenal', now.getMonth(), now.getFullYear())
         setPeriodo('quincenal')
-        setStart('')
-        setEnd('')
+        setStart(rango.start)
+        setEnd(rango.end)
         setOperacionesSeleccionadas([])
-        router.push(`?`)
+        router.push('?')
         setIsLoading(false)
     }
 
+    const totalOps = listaOperaciones.length
+    const opsLabel =
+        operacionesSeleccionadas.length === 0
+            ? 'Todas las operaciones'
+            : operacionesSeleccionadas.length === 1
+                ? operacionesSeleccionadas[0]
+                : `${operacionesSeleccionadas.length} seleccionadas`
+
     return (
-        <div className="flex flex-col gap-4 mb-6 p-4 bg-white rounded-lg border shadow-sm">
-            <div className="flex flex-wrap gap-4 items-end">
-                <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-slate-700">Mes:</label>
-                    <select
-                        value={mes}
-                        onChange={(e) => setMes(e.target.value)}
-                        className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                        disabled={periodo === 'personalizado'}
-                    >
-                        {MESES.map((m, i) => (
-                            <option key={i} value={i}>{m}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-slate-700">Año:</label>
-                    <select
-                        value={anio}
-                        onChange={(e) => setAnio(e.target.value)}
-                        className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
-                        disabled={periodo === 'personalizado'}
-                    >
-                        {ANIOS.map((a) => (
-                            <option key={a} value={a}>{a}</option>
-                        ))}
-                    </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                    <label className="text-sm font-medium text-slate-700">Período:</label>
+        <div className="bg-white rounded-xl border shadow-sm p-4 md:p-5 mb-6">
+            {/* Línea superior: filtros compactos */}
+            <div className="flex flex-wrap items-end gap-3">
+                {/* Período */}
+                <div className="space-y-1.5 min-w-[160px] flex-1 md:flex-none">
+                    <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                        Período
+                    </Label>
                     <select
                         value={periodo}
-                        onChange={(e) => setPeriodo(e.target.value)}
-                        className="h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
+                        onChange={(e) => handlePeriodoChange(e.target.value as TipoPeriodo)}
+                        className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition"
                     >
-                        <option value="quincenal">Quincenal (Agrupado)</option>
-                        <option value="semanal">Semanal (Agrupado)</option>
-                        <option value="mensual">Mensual (Consolidado)</option>
-                        <option value="personalizado">Rango Personalizado</option>
+                        <option value="quincenal">Quincenal</option>
+                        <option value="semanal">Semanal</option>
+                        <option value="mensual">Mensual</option>
+                        <option value="personalizado">Personalizado</option>
                     </select>
                 </div>
 
-                {periodo === 'personalizado' && (
-                    <div className="flex gap-2 items-end bg-slate-50 p-2 rounded-md border">
-                        <div className="flex flex-col gap-1.5">
-                            <label className="text-xs font-medium text-slate-600">Desde:</label>
-                            <input
-                                type="date"
-                                value={start}
-                                onChange={(e) => setStart(e.target.value)}
-                                className="h-8 px-2 border rounded text-sm"
-                            />
-                        </div>
-                        <div className="flex flex-col gap-1.5">
-                            <label className="text-xs font-medium text-slate-600">Hasta:</label>
-                            <input
-                                type="date"
-                                value={end}
-                                onChange={(e) => setEnd(e.target.value)}
-                                className="h-8 px-2 border rounded text-sm"
-                            />
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* Selector Múltiple de Operaciones (solo visible para admin) */}
-            {rol !== 'coordinador' && (
-            <div className="pt-2 border-t mt-2">
-                <label className="text-sm font-medium text-slate-700 mb-2 block">Filtrar por Operaciones:</label>
-                <div className="relative" ref={dropdownRef}>
-                    <button
-                        type="button"
-                        onClick={() => setDropdownOpen(!dropdownOpen)}
-                        className="w-full max-w-sm h-10 px-3 py-2 bg-white border border-slate-200 rounded-md text-sm text-left flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-slate-900 hover:border-slate-300 transition-colors"
-                    >
-                        <span className={operacionesSeleccionadas.length === 0 ? 'text-slate-400' : 'text-slate-700'}>
-                            {operacionesSeleccionadas.length === 0
-                                ? 'Todas las operaciones'
-                                : `${operacionesSeleccionadas.length} operación${operacionesSeleccionadas.length > 1 ? 'es' : ''} seleccionada${operacionesSeleccionadas.length > 1 ? 's' : ''}`
-                            }
-                        </span>
-                        <svg className={`w-4 h-4 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                    </button>
-
-                    {dropdownOpen && (
-                        <div className="absolute z-50 mt-1 w-full max-w-sm bg-white border border-slate-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
-                            {listaOperaciones.length === 0 ? (
-                                <div className="px-3 py-2 text-xs text-slate-400">Cargando operaciones...</div>
-                            ) : (
-                                <>
-                                    <button
-                                        type="button"
-                                        onClick={() => setOperacionesSeleccionadas([])}
-                                        className="w-full px-3 py-2 text-xs text-blue-600 hover:bg-blue-50 text-left border-b border-slate-100 font-medium"
-                                    >
-                                        Limpiar selección
-                                    </button>
-                                    {listaOperaciones.map(op => {
-                                        const isSelected = operacionesSeleccionadas.includes(op.nombre)
-                                        return (
-                                            <label
-                                                key={op.id}
-                                                className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm"
-                                            >
-                                                <input
-                                                    type="checkbox"
-                                                    checked={isSelected}
-                                                    onChange={() => toggleOperacion(op.nombre)}
-                                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                                                />
-                                                <span className={isSelected ? 'text-blue-700 font-medium' : 'text-slate-600'}>{op.nombre}</span>
-                                            </label>
-                                        )
-                                    })}
-                                </>
-                            )}
-                        </div>
-                    )}
+                {/* Desde */}
+                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                    <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                        Desde
+                    </Label>
+                    <input
+                        type="date"
+                        value={start}
+                        onChange={(e) => {
+                            setStart(e.target.value)
+                            if (periodo !== 'personalizado') setPeriodo('personalizado')
+                        }}
+                        className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition"
+                    />
                 </div>
 
-                {/* Chips de operaciones seleccionadas */}
-                {operacionesSeleccionadas.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                        {operacionesSeleccionadas.map(op => (
-                            <span
-                                key={op}
-                                className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full"
-                            >
-                                {op}
-                                <button
-                                    type="button"
-                                    onClick={() => toggleOperacion(op)}
-                                    className="hover:text-blue-600"
-                                >
-                                    ×
-                                </button>
+                {/* Hasta */}
+                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                    <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                        Hasta
+                    </Label>
+                    <input
+                        type="date"
+                        value={end}
+                        onChange={(e) => {
+                            setEnd(e.target.value)
+                            if (periodo !== 'personalizado') setPeriodo('personalizado')
+                        }}
+                        className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition"
+                    />
+                </div>
+
+                {/* Operaciones (solo admin) */}
+                {rol !== 'coordinador' && (
+                    <div className="space-y-1.5 flex-1 min-w-[200px] relative" ref={dropdownRef}>
+                        <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                            Operaciones
+                        </Label>
+                        <button
+                            type="button"
+                            onClick={() => setDropdownOpen(!dropdownOpen)}
+                            className="w-full h-10 px-3 bg-white border border-slate-200 rounded-md text-sm text-left flex items-center justify-between focus:outline-none focus:ring-2 focus:ring-blue-500/40 hover:border-slate-300 transition"
+                        >
+                            <span className={operacionesSeleccionadas.length === 0 ? 'text-slate-500' : 'text-slate-800 font-medium'}>
+                                {opsLabel}
                             </span>
-                        ))}
+                            <ChevronDown
+                                className={`w-4 h-4 text-slate-400 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`}
+                            />
+                        </button>
+
+                        {dropdownOpen && (
+                            <div className="absolute z-50 mt-1 w-full bg-white border border-slate-200 rounded-md shadow-lg max-h-64 overflow-y-auto">
+                                {totalOps === 0 ? (
+                                    <div className="px-3 py-2.5 text-xs text-slate-400">Cargando…</div>
+                                ) : (
+                                    <>
+                                        <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 bg-slate-50/80">
+                                            <span className="text-xs text-slate-500">
+                                                {operacionesSeleccionadas.length} de {totalOps}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => setOperacionesSeleccionadas([])}
+                                                className="text-xs text-blue-600 hover:text-blue-700 font-medium"
+                                            >
+                                                Limpiar
+                                            </button>
+                                        </div>
+                                        {listaOperaciones.map((op) => {
+                                            const isSelected = operacionesSeleccionadas.includes(op.nombre)
+                                            return (
+                                                <label
+                                                    key={op.id}
+                                                    className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm"
+                                                >
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={isSelected}
+                                                        onChange={() => toggleOperacion(op.nombre)}
+                                                        className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                                                    />
+                                                    <span className={isSelected ? 'text-blue-700 font-medium' : 'text-slate-700'}>
+                                                        {op.nombre}
+                                                    </span>
+                                                    {isSelected && <Check className="h-3.5 w-3.5 text-blue-600 ml-auto" />}
+                                                </label>
+                                            )
+                                        })}
+                                    </>
+                                )}
+                            </div>
+                        )}
                     </div>
                 )}
-            </div>
-            )}
 
-            <div className="flex justify-end gap-2 mt-4">
-                <Button
-                    variant="outline"
-                    onClick={handleReset}
-                    disabled={isLoading}
-                >
-                    Restablecer
-                </Button>
-                <Button
-                    variant="default"
-                    onClick={handleApply}
-                    disabled={isLoading}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                >
-                    {isLoading ? 'Calculando...' : 'Aplicar Filtros'}
-                </Button>
+                {/* Botones */}
+                <div className="flex gap-2 shrink-0">
+                    <Button
+                        variant="outline"
+                        onClick={handleReset}
+                        disabled={isLoading}
+                        className="h-10 gap-1.5"
+                    >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Restablecer</span>
+                    </Button>
+                    <Button
+                        onClick={handleApply}
+                        disabled={isLoading}
+                        className="h-10 gap-1.5 bg-blue-600 hover:bg-blue-700"
+                    >
+                        <Filter className="h-3.5 w-3.5" />
+                        {isLoading ? 'Calculando…' : 'Aplicar'}
+                    </Button>
+                </div>
             </div>
-        </div >
+
+            {/* Chips de operaciones seleccionadas (solo si hay más de una) */}
+            {rol !== 'coordinador' && operacionesSeleccionadas.length > 1 && (
+                <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
+                    {operacionesSeleccionadas.map((op) => (
+                        <span
+                            key={op}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium bg-blue-50 text-blue-700 rounded-full border border-blue-200"
+                        >
+                            {op}
+                            <button
+                                type="button"
+                                onClick={() => toggleOperacion(op)}
+                                className="hover:text-blue-900 -mr-0.5"
+                                aria-label={`Quitar ${op}`}
+                            >
+                                <X className="h-3 w-3" />
+                            </button>
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
     )
 }

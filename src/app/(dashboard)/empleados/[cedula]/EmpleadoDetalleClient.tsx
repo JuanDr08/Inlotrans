@@ -1,37 +1,192 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Separator } from '@/components/ui/separator'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { Input } from '@/components/ui/input'
 import {
-    Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
 } from '@/components/ui/table'
 import {
-    ArrowLeft, Clock, Calendar, User, Briefcase,
-    LogIn, LogOut, Coffee, Play, Sun, FileText, DollarSign
+    ArrowLeft,
+    Briefcase,
+    User,
+    Calendar,
+    Clock,
+    AlertTriangle,
+    CheckCircle2,
+    XCircle,
+    TrendingUp,
+    TrendingDown,
+    Minus,
+    FileText,
+    DollarSign,
+    Wallet,
+    ShieldAlert,
+    Target,
+    Moon,
+    Sun,
+    Plus,
+    ArrowDownLeft,
+    ArrowUpRight,
+    Info,
 } from 'lucide-react'
-import { getRegistrosPorDia } from './actions'
+import type { ResumenEmpleadoPeriodo } from '@/lib/reportes'
 
-type TipoRegistro = 'ENTRADA' | 'SALIDA' | 'PAUSA_INICIO' | 'PAUSA_FIN'
+// ═══════════════════════════════════════════════════════════════════════
+// TIPOS
+// ═══════════════════════════════════════════════════════════════════════
 
-const tipoConfig: Record<TipoRegistro, { label: string; icon: typeof LogIn; color: string; bg: string }> = {
-    ENTRADA: { label: 'Entrada', icon: LogIn, color: 'text-blue-700', bg: 'bg-blue-100' },
-    SALIDA: { label: 'Salida', icon: LogOut, color: 'text-red-700', bg: 'bg-red-100' },
-    PAUSA_INICIO: { label: 'Pausa', icon: Coffee, color: 'text-amber-700', bg: 'bg-amber-100' },
-    PAUSA_FIN: { label: 'Reanudar', icon: Play, color: 'text-emerald-700', bg: 'bg-emerald-100' },
+type EstadoJornada = 'ABIERTO' | 'CERRADO' | 'CERRADO_MANUAL' | 'INCONSISTENTE'
+type EstadoAprobacion = 'PENDIENTE' | 'APROBADA' | 'RECHAZADA'
+type TipoAlerta = 'INCONSISTENTE' | 'ALERTA_CRITICA' | 'EXTRAS_PENDIENTES'
+type TipoMovimiento =
+    | 'ABONO_EXCEDENTE'
+    | 'CARGO_DEFICIT'
+    | 'NOVEDAD_COMPENSA'
+    | 'AJUSTE_MANUAL'
+
+interface Jornada {
+    id: string
+    empleado_id: string
+    operacion: string
+    entrada: string
+    salida: string | null
+    estado: EstadoJornada
+    minutos_total: number
+    minutos_normales: number
+    minutos_nocturnas: number
+    minutos_domingos: number
+    minutos_festivos: number
+    minutos_domingos_festivos_nocturnos: number
+    minutos_extras_ordinarias: number
+    minutos_extras_nocturnas: number
+    minutos_extras_dominical_festivo: number
+    minutos_extras_nocturna_dominical_festivo: number
+    minutos_almuerzo_descontados: number
+    cerrada_por: string | null
+    alerta_critica: boolean
 }
 
-function formatHoraColombia(fechaISO: string) {
-    // Crear fecha y restar 5h para Colombia
-    const d = new Date(fechaISO)
-    const colombiaMs = d.getTime() - (5 * 60 * 60 * 1000)
-    const col = new Date(colombiaMs)
+interface Novedad {
+    id: string
+    tipo_novedad: string
+    fecha_novedad: string
+    fecha_inicio: string | null
+    fecha_fin: string | null
+    es_pagado: boolean
+    codigo_causa: number | null
+    valor_monetario: number | null
+    descripcion: string | null
+    created_at: string
+}
+
+interface Movimiento {
+    id: string
+    minutos: number
+    motivo: TipoMovimiento
+    saldo_antes: number
+    saldo_despues: number
+    nota: string | null
+    created_at: string
+    jornada_id: string | null
+    novedad_id: string | null
+}
+
+interface Aprobacion {
+    id: string
+    jornada_id: string
+    minutos_solicitados: number
+    estado: EstadoAprobacion
+    coordinador_id: string | null
+    nota_coordinador: string | null
+    created_at: string
+    updated_at: string
+}
+
+interface Alerta {
+    id: string
+    tipo: TipoAlerta
+    jornada_id: string | null
+    operacion: string | null
+    mensaje: string | null
+    leida: boolean
+    created_at: string
+}
+
+interface SemanaDominical {
+    semana_inicio: string
+    semana_fin: string
+    minutos_ordinarios: number
+    minutos_novedades_remuneradas: number
+    total_minutos_cumplimiento: number
+    paga_domingo: boolean | null
+    marcado_por: string
+    created_at: string
+}
+
+interface Props {
+    empleado: {
+        id: string
+        nombre: string
+        cargo: string | null
+        operacion: string | null
+        status: 'activo' | 'inactivo'
+    }
+    jornadasMes: Jornada[]
+    novedades: Novedad[]
+    horasMes: ResumenEmpleadoPeriodo | null
+    bolsaSaldo: number
+    movimientosBolsa: Movimiento[]
+    aprobaciones: Aprobacion[]
+    alertas: Alerta[]
+    semanaDominical: SemanaDominical | null
+    configOperacion: {
+        limite_horas: number
+        minutos_almuerzo: number
+        turnos: { nombre: string; hora_inicio: string; hora_fin: string }[]
+    } | null
+    mesRango: { inicio: string; fin: string }
+    rol: 'admin' | 'coordinador'
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// UTILIDADES DE FORMATO
+// ═══════════════════════════════════════════════════════════════════════
+
+function iniciales(nombre: string) {
+    return nombre
+        .split(' ')
+        .slice(0, 2)
+        .map((n) => n[0])
+        .join('')
+        .toUpperCase()
+}
+
+function fmtMinutos(min: number, opts: { conSigno?: boolean } = {}): string {
+    if (!min) return opts.conSigno ? '0h 00m' : '0h 00m'
+    const signo = min < 0 ? '-' : opts.conSigno && min > 0 ? '+' : ''
+    const abs = Math.abs(min)
+    const h = Math.floor(abs / 60)
+    const m = abs % 60
+    return `${signo}${h}h ${String(m).padStart(2, '0')}m`
+}
+
+function fmtCOP(n: number) {
+    return `$${(n ?? 0).toLocaleString('es-CO', { maximumFractionDigits: 0 })}`
+}
+
+function horaColombia(iso: string) {
+    const d = new Date(iso)
+    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
     const h = col.getUTCHours()
     const m = col.getUTCMinutes()
     const ampm = h >= 12 ? 'p.m.' : 'a.m.'
@@ -39,530 +194,920 @@ function formatHoraColombia(fechaISO: string) {
     return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`
 }
 
-function formatFechaCorta(fechaISO: string) {
-    return new Date(fechaISO).toLocaleDateString('es-CO', {
-        day: '2-digit', month: '2-digit', year: 'numeric'
+function fechaCortaColombia(iso: string) {
+    const d = new Date(iso)
+    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
+    const dia = String(col.getUTCDate()).padStart(2, '0')
+    const mes = String(col.getUTCMonth() + 1).padStart(2, '0')
+    return `${dia}/${mes}/${col.getUTCFullYear()}`
+}
+
+function fechaLargaColombia(iso: string) {
+    const d = new Date(iso)
+    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
+    return col.toLocaleDateString('es-CO', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
     })
 }
 
-function getIniciales(nombre: string) {
-    return nombre.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase()
+function fechaSoloFecha(iso: string) {
+    // para fechas que vienen como YYYY-MM-DD (sin hora)
+    const [y, m, d] = iso.split('T')[0].split('-').map(Number)
+    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
 }
 
-function fechaColombiaKey(fechaISO: string): string {
-    const d = new Date(fechaISO)
-    const colombiaMs = d.getTime() - (5 * 60 * 60 * 1000)
-    const col = new Date(colombiaMs)
-    return `${col.getUTCFullYear()}-${String(col.getUTCMonth() + 1).padStart(2, '0')}-${String(col.getUTCDate()).padStart(2, '0')}`
+function nombreMes(iso: string) {
+    const d = new Date(iso)
+    return d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
 }
 
-// Representacion de un turno completo (ENTRADA -> ... -> SALIDA)
-type TurnoRegistrado = {
-    fecha: string // YYYY-MM-DD de la ENTRADA (fecha referencia)
-    registros: any[] // todos los registros del turno en orden cronologico
-    entrada: any | null
-    salida: any | null
-    pausas: number
-    abierto: boolean // true si no tiene SALIDA
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIGURACIÓN DE LABELS Y COLORES
+// ═══════════════════════════════════════════════════════════════════════
+
+const ESTADO_JORNADA_CFG: Record<EstadoJornada, { label: string; cls: string; Icon: typeof CheckCircle2 }> = {
+    ABIERTO:        { label: 'En curso',        cls: 'bg-blue-100 text-blue-700 border-blue-200',       Icon: Clock },
+    CERRADO:        { label: 'Cerrada',         cls: 'bg-emerald-100 text-emerald-700 border-emerald-200', Icon: CheckCircle2 },
+    CERRADO_MANUAL: { label: 'Cierre manual',   cls: 'bg-amber-100 text-amber-700 border-amber-200',    Icon: ShieldAlert },
+    INCONSISTENTE:  { label: 'Inconsistente',   cls: 'bg-red-100 text-red-700 border-red-200',          Icon: AlertTriangle },
 }
 
-// Agrupar registros por TURNOS (pares ENTRADA->SALIDA), no por dia calendario.
-// Esto resuelve turnos nocturnos que cruzan medianoche.
-function agruparPorTurnos(registros: any[]): TurnoRegistrado[] {
-    const turnos: TurnoRegistrado[] = []
-    let turnoActual: TurnoRegistrado | null = null
-
-    for (const reg of registros) {
-        if (reg.tipo === 'ENTRADA') {
-            // Si hay un turno abierto anterior, cerrarlo como abierto
-            if (turnoActual) {
-                turnos.push(turnoActual)
-            }
-            turnoActual = {
-                fecha: fechaColombiaKey(reg.fecha_hora),
-                registros: [reg],
-                entrada: reg,
-                salida: null,
-                pausas: 0,
-                abierto: true,
-            }
-        } else if (turnoActual) {
-            turnoActual.registros.push(reg)
-            if (reg.tipo === 'SALIDA') {
-                turnoActual.salida = reg
-                turnoActual.abierto = false
-                turnos.push(turnoActual)
-                turnoActual = null
-            } else if (reg.tipo === 'PAUSA_INICIO') {
-                turnoActual.pausas++
-            }
-        }
-        // Ignorar SALIDA/PAUSA sin ENTRADA previa
-    }
-
-    // Turno abierto sin cerrar
-    if (turnoActual) {
-        turnos.push(turnoActual)
-    }
-
-    return turnos
+const ESTADO_APROBACION_CFG: Record<EstadoAprobacion, { label: string; cls: string }> = {
+    PENDIENTE: { label: 'Pendiente', cls: 'bg-amber-100 text-amber-700 border-amber-200' },
+    APROBADA:  { label: 'Aprobada',  cls: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+    RECHAZADA: { label: 'Rechazada', cls: 'bg-red-100 text-red-700 border-red-200' },
 }
 
-// Indexar turnos por fecha de entrada para merge con novedades
-function indexarTurnosPorFecha(turnos: TurnoRegistrado[]): Record<string, TurnoRegistrado[]> {
-    const map: Record<string, TurnoRegistrado[]> = {}
-    for (const t of turnos) {
-        if (!map[t.fecha]) map[t.fecha] = []
-        map[t.fecha].push(t)
-    }
-    return map
+const MOTIVO_CFG: Record<TipoMovimiento, { label: string; Icon: typeof Plus; tone: 'pos' | 'neg' | 'neutro' }> = {
+    ABONO_EXCEDENTE:   { label: 'Abono por excedente',  Icon: ArrowUpRight,   tone: 'pos' },
+    CARGO_DEFICIT:     { label: 'Cargo por déficit',    Icon: ArrowDownLeft,  tone: 'neg' },
+    NOVEDAD_COMPENSA:  { label: 'Compensación usada',   Icon: ArrowDownLeft,  tone: 'neg' },
+    AJUSTE_MANUAL:     { label: 'Ajuste manual',        Icon: Info,           tone: 'neutro' },
 }
 
-// Calcular horas trabajadas de un turno a partir de sus registros
-function calcularHorasTurno(registros: any[]) {
-    let totalMs = 0
-    let pausaMs = 0
-    let entradaActual: number | null = null
-    let pausaInicio: number | null = null
-
-    for (const reg of registros) {
-        const ts = new Date(reg.fecha_hora).getTime()
-        if (reg.tipo === 'ENTRADA') {
-            entradaActual = ts
-        } else if (reg.tipo === 'SALIDA' && entradaActual !== null) {
-            totalMs += ts - entradaActual
-            entradaActual = null
-        } else if (reg.tipo === 'PAUSA_INICIO') {
-            pausaInicio = ts
-        } else if (reg.tipo === 'PAUSA_FIN' && pausaInicio !== null) {
-            pausaMs += ts - pausaInicio
-            pausaInicio = null
-        }
-    }
-
-    const trabajadoMs = Math.max(0, totalMs - pausaMs)
-    const horas = Math.floor(trabajadoMs / 3600000)
-    const minutos = Math.floor((trabajadoMs % 3600000) / 60000)
-    return { horas, minutos, totalMs: trabajadoMs, pausaMs }
+const ALERTA_CFG: Record<TipoAlerta, { label: string; cls: string; Icon: typeof AlertTriangle }> = {
+    INCONSISTENTE:     { label: 'Jornada inconsistente',   cls: 'bg-red-50 border-red-300 text-red-800',       Icon: AlertTriangle },
+    ALERTA_CRITICA:    { label: 'Jornada >12h',            cls: 'bg-orange-50 border-orange-300 text-orange-800', Icon: ShieldAlert },
+    EXTRAS_PENDIENTES: { label: 'Extras por aprobar',      cls: 'bg-amber-50 border-amber-300 text-amber-800', Icon: Clock },
 }
 
-// Obtener fechas de novedades como claves YYYY-MM-DD
-function getNovedadDias(novedades: any[]): Record<string, any[]> {
-    const map: Record<string, any[]> = {}
-    for (const nov of novedades) {
-        if (nov.start_date && nov.end_date) {
-            const start = new Date(nov.start_date)
-            const end = new Date(nov.end_date)
-            for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-                const key = d.toISOString().slice(0, 10)
-                if (!map[key]) map[key] = []
-                map[key].push(nov)
-            }
-        } else if (nov.fecha_novedad) {
-            const key = nov.fecha_novedad.slice(0, 10)
-            if (!map[key]) map[key] = []
-            map[key].push(nov)
-        }
-    }
-    return map
-}
+const DESGLOSE_TIPOS = [
+    { key: 'normales',                       label: 'Ordinarias',          color: 'bg-slate-100 text-slate-700',     concepto: 'normal' },
+    { key: 'nocturnas',                      label: 'Nocturnas',           color: 'bg-indigo-100 text-indigo-700',   concepto: 'nocturno' },
+    { key: 'domingos',                       label: 'Domingo',             color: 'bg-blue-100 text-blue-700',       concepto: 'domingo' },
+    { key: 'festivos',                       label: 'Festivo',             color: 'bg-amber-100 text-amber-800',     concepto: 'festivo' },
+    { key: 'domingosFestivosNocturnos',      label: 'Dom/Fest Nocturno',   color: 'bg-violet-100 text-violet-700',   concepto: 'domingoFestivoNocturno' },
+    { key: 'extrasOrdinarias',               label: 'Extra ordinaria',     color: 'bg-emerald-100 text-emerald-700', concepto: 'extra' },
+    { key: 'extrasNocturnas',                label: 'Extra nocturna',      color: 'bg-pink-100 text-pink-700',       concepto: 'extraNocturno' },
+    { key: 'extrasDominicalFestivo',         label: 'Extra dom/fest',      color: 'bg-orange-100 text-orange-700',   concepto: 'extraDominicalFestivo' },
+    { key: 'extrasNocturnaDominicalFestivo', label: 'Extra nocturna d/f',  color: 'bg-red-100 text-red-700',         concepto: 'extraNocturnaDominicalFestivo' },
+] as const
 
-export function EmpleadoDetalleClient({
-    empleado,
-    registrosMes,
-    novedades,
-    horasMes,
-    rol,
-}: {
-    empleado: any
-    registrosMes: any[]
-    novedades: any[]
-    horasMes: any
-    rol: string
-}) {
+// ═══════════════════════════════════════════════════════════════════════
+// COMPONENTE PRINCIPAL
+// ═══════════════════════════════════════════════════════════════════════
+
+export function EmpleadoDetalleClient(props: Props) {
+    const {
+        empleado,
+        jornadasMes,
+        novedades,
+        horasMes,
+        bolsaSaldo,
+        movimientosBolsa,
+        aprobaciones,
+        alertas,
+        semanaDominical,
+        configOperacion,
+        mesRango,
+    } = props
+
     const router = useRouter()
-    const [activeTab, setActiveTab] = useState('timeline')
-    const [fechaDetalle, setFechaDetalle] = useState('')
-    const [registrosDia, setRegistrosDia] = useState<any[]>([])
-    const [cargandoDia, setCargandoDia] = useState(false)
 
-    // Agrupar por TURNOS (ENTRADA->SALIDA), no por dia calendario
-    const turnosDelMes = agruparPorTurnos(registrosMes)
-    const turnosPorFecha = indexarTurnosPorFecha(turnosDelMes)
-    const novedadDias = getNovedadDias(novedades)
+    // KPIs derivados
+    const jornadasInconsistentes = jornadasMes.filter((j) => j.estado === 'INCONSISTENTE').length
+    const aprobacionesPendientes = aprobaciones.filter((a) => a.estado === 'PENDIENTE').length
+    const minutosExtrasPendientes = aprobaciones
+        .filter((a) => a.estado === 'PENDIENTE')
+        .reduce((acc, a) => acc + a.minutos_solicitados, 0)
 
-    // Combinar fechas de turnos y novedades
-    const todasLasFechas = new Set([...Object.keys(turnosPorFecha), ...Object.keys(novedadDias)])
-    const fechasOrdenadas = Array.from(todasLasFechas).sort().reverse()
+    const saldoColor =
+        bolsaSaldo > 0 ? 'text-emerald-600' : bolsaSaldo < 0 ? 'text-red-600' : 'text-slate-500'
+    const SaldoIcon = bolsaSaldo > 0 ? TrendingUp : bolsaSaldo < 0 ? TrendingDown : Minus
 
-    const turno = empleado.turno
-
-    const handleVerDia = async (fecha: string) => {
-        setFechaDetalle(fecha)
-        setActiveTab('dia')
-        setCargandoDia(true)
-        const regs = await getRegistrosPorDia(empleado.id, fecha)
-        setRegistrosDia(regs)
-        setCargandoDia(false)
-    }
+    // Cumplimiento dominical
+    const MINUTOS_PACTADOS = 44 * 60
+    const cumplimiento = semanaDominical?.total_minutos_cumplimiento ?? 0
+    const porcentajeCumplimiento = Math.min(100, Math.round((cumplimiento / MINUTOS_PACTADOS) * 100))
 
     return (
         <div className="space-y-6">
-            {/* Header */}
-            <div className="flex items-center gap-4">
-                <Button variant="ghost" size="icon" onClick={() => router.back()}>
-                    <ArrowLeft className="h-5 w-5" />
+            {/* ───── Toolbar ───── */}
+            <div className="flex items-center justify-between">
+                <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
+                    <ArrowLeft className="h-4 w-4" /> Volver
                 </Button>
-                <h1 className="text-2xl font-bold tracking-tight">Detalle del Empleado</h1>
+                <p className="text-sm text-slate-500">{nombreMes(mesRango.inicio)}</p>
             </div>
 
-            {/* Perfil + Resumen */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-                <Card className="lg:col-span-1">
-                    <CardContent className="pt-6">
-                        <div className="flex flex-col items-center text-center">
-                            <Avatar className="h-20 w-20 mb-4">
-                                <AvatarFallback className="text-2xl font-bold bg-blue-100 text-blue-700">
-                                    {getIniciales(empleado.nombre)}
-                                </AvatarFallback>
-                            </Avatar>
-                            <h2 className="text-lg font-semibold">{empleado.nombre}</h2>
-                            <p className="text-sm text-muted-foreground">{empleado.cargo}</p>
-                            <Badge variant={empleado.status === 'activo' ? 'secondary' : 'destructive'} className={empleado.status === 'activo' ? 'bg-emerald-100 text-emerald-800 mt-2' : 'mt-2'}>
-                                {empleado.status}
-                            </Badge>
-                        </div>
-                        <Separator className="my-4" />
-                        <div className="space-y-3 text-sm">
-                            <InfoRow icon={User} label="Cédula" value={empleado.id} />
-                            <InfoRow icon={Briefcase} label="Operación" value={empleado.operacion} />
-                            {empleado.salario && <InfoRow icon={DollarSign} label="Salario" value={`$${Number(empleado.salario).toLocaleString('es-CO')}`} />}
-                            {turno && <InfoRow icon={Clock} label="Turno" value={turno.nombre} />}
-                            {turno && <InfoRow icon={Sun} label="Horario" value={`${turno.hora_inicio.slice(0, 5)} — ${turno.hora_fin.slice(0, 5)}`} />}
-                            {empleado.birthdate && <InfoRow icon={Calendar} label="Nacimiento" value={new Date(empleado.birthdate).toLocaleDateString('es-CO')} />}
-                        </div>
-                    </CardContent>
-                </Card>
+            {/* ───── Header del empleado ───── */}
+            <HeaderEmpleado empleado={empleado} configOperacion={configOperacion} />
 
-                <Card className="lg:col-span-3">
-                    <CardHeader className="pb-3">
-                        <CardTitle className="text-lg">Resumen del Mes Actual</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        {horasMes ? (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                                <MiniStat label="Total Trabajado" value={horasMes.horasTotalesFormato} accent="blue" />
-                                <MiniStat label="Normales" value={horasMes.horasFormato.normales} accent="slate" />
-                                <MiniStat label="Extras Diurnas" value={horasMes.horasFormato.extrasOrdinarias} accent="green" />
-                                <MiniStat label="Nocturnas" value={horasMes.horasFormato.nocturnas} accent="purple" />
-                                <MiniStat label="Extras Nocturnas" value={horasMes.horasFormato.extrasNocturnas} accent="red" />
-                                <MiniStat label="Domingos" value={horasMes.horasFormato.domingos} accent="blue" />
-                                <MiniStat label="Festivos" value={horasMes.horasFormato.festivos} accent="amber" />
-                                <MiniStat label="Dom/Fest Nocturno" value={horasMes.horasFormato.domingosFestivosNocturnos} accent="purple" />
-                                <MiniStat label="Extra Dom/Fest" value={horasMes.horasFormato.extrasDominicalFestivo} accent="amber" />
-                                <MiniStat label="Extra Noct Dom/Fest" value={horasMes.horasFormato.extrasNocturnaDominicalFestivo} accent="red" />
-                                {/* Valor monetario comentado por solicitud
-                                <MiniStat label="Total a Pagar" value={`$${horasMes.valorTotal?.toLocaleString('es-CO')}`} accent="emerald" />
-                                */}
-                            </div>
-                        ) : (
-                            <p className="text-muted-foreground text-sm py-4">Sin registros este mes</p>
-                        )}
-                    </CardContent>
-                </Card>
+            {/* ───── Banner de alertas ───── */}
+            {alertas.length > 0 && <BannerAlertas alertas={alertas} />}
+
+            {/* ───── KPIs ───── */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <KpiCard
+                    titulo="Bolsa de horas"
+                    valor={fmtMinutos(bolsaSaldo, { conSigno: true })}
+                    subtitulo={
+                        bolsaSaldo > 0
+                            ? 'Saldo a favor del empleado'
+                            : bolsaSaldo < 0
+                                ? 'Deuda pendiente'
+                                : 'Saldo en cero'
+                    }
+                    Icon={Wallet}
+                    valorClass={saldoColor}
+                    tendenciaIcon={SaldoIcon}
+                />
+                <KpiCard
+                    titulo="Horas del mes"
+                    valor={horasMes?.horasTotalesFormato ?? '0:00'}
+                    subtitulo={`${horasMes?.totalMinutos ?? 0} minutos efectivos`}
+                    Icon={Clock}
+                />
+                <KpiCard
+                    titulo="Valor del mes"
+                    valor={fmtCOP(horasMes?.valorTotal ?? 0)}
+                    subtitulo="Bruto, sin aprobar extras"
+                    Icon={DollarSign}
+                    valorClass="text-emerald-600"
+                />
+                <KpiCard
+                    titulo="Jornadas del mes"
+                    valor={String(jornadasMes.length)}
+                    subtitulo={
+                        jornadasInconsistentes > 0
+                            ? `${jornadasInconsistentes} inconsistente(s)`
+                            : 'Todas correctas'
+                    }
+                    Icon={Calendar}
+                    valorClass={jornadasInconsistentes > 0 ? 'text-red-600' : 'text-slate-800'}
+                />
             </div>
 
-            {/* Tabs */}
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-                <TabsList className="grid w-full grid-cols-3">
-                    <TabsTrigger value="timeline">Historial del Mes</TabsTrigger>
-                    <TabsTrigger value="dia">Detalle por Día</TabsTrigger>
-                    <TabsTrigger value="novedades">Novedades ({novedades.length})</TabsTrigger>
+            {/* ───── Cumplimiento semanal (44h) ───── */}
+            {semanaDominical && (
+                <CumplimientoDominical
+                    semana={semanaDominical}
+                    porcentaje={porcentajeCumplimiento}
+                    minutosPactados={MINUTOS_PACTADOS}
+                />
+            )}
+
+            {/* ───── Resumen del mes por tipo de hora ───── */}
+            {horasMes && <DesgloseMensual horasMes={horasMes} />}
+
+            {/* ───── Tabs con detalle ───── */}
+            <Tabs defaultValue="jornadas" className="w-full">
+                <TabsList className="grid grid-cols-2 md:grid-cols-4 w-full">
+                    <TabsTrigger value="jornadas">
+                        Jornadas ({jornadasMes.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="bolsa">
+                        Bolsa ({movimientosBolsa.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="aprobaciones">
+                        Aprobaciones{aprobacionesPendientes > 0 ? ` (${aprobacionesPendientes})` : ''}
+                    </TabsTrigger>
+                    <TabsTrigger value="novedades">
+                        Novedades ({novedades.length})
+                    </TabsTrigger>
                 </TabsList>
 
-                {/* Tab: Timeline */}
-                <TabsContent value="timeline" className="mt-4">
-                    <Card>
-                        <CardContent className="pt-6">
-                            {fechasOrdenadas.length === 0 ? (
-                                <p className="text-muted-foreground text-center py-8">Sin actividad este mes</p>
-                            ) : (
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Fecha</TableHead>
-                                            <TableHead>Entrada</TableHead>
-                                            <TableHead>Salida</TableHead>
-                                            <TableHead>Pausas</TableHead>
-                                            <TableHead>Trabajado</TableHead>
-                                            <TableHead>Novedad</TableHead>
-                                            <TableHead className="text-right">Acciones</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {fechasOrdenadas.map(fecha => {
-                                            const turnosDeEstaFecha = turnosPorFecha[fecha] || []
-                                            const novsDelDia = novedadDias[fecha] || []
-
-                                            // Si hay turnos, mostrar una fila por turno
-                                            if (turnosDeEstaFecha.length > 0) {
-                                                return turnosDeEstaFecha.map((t, idx) => {
-                                                    const { horas, minutos } = calcularHorasTurno(t.registros)
-
-                                                    // Detectar llegada tarde
-                                                    let llegadaTarde = false
-                                                    if (turno && t.entrada) {
-                                                        const entradaMs = new Date(t.entrada.fecha_hora).getTime() - (5 * 3600000)
-                                                        const col = new Date(entradaMs)
-                                                        const [tH, tM] = turno.hora_inicio.split(':').map(Number)
-                                                        const entradaMin = col.getUTCHours() * 60 + col.getUTCMinutes()
-                                                        const turnoMin = tH * 60 + tM + 5
-                                                        if (entradaMin > turnoMin) llegadaTarde = true
-                                                    }
-
-                                                    // Si la salida es en otro dia, mostrar ambas fechas
-                                                    const salidaEnOtroDia = t.salida && fechaColombiaKey(t.salida.fecha_hora) !== t.fecha
-
-                                                    return (
-                                                        <TableRow key={`${fecha}-${idx}`} className="cursor-pointer hover:bg-slate-50" onClick={() => handleVerDia(fecha)}>
-                                                            <TableCell className="font-medium text-sm">
-                                                                {new Date(fecha + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'short', day: '2-digit', month: 'short' })}
-                                                            </TableCell>
-                                                            <TableCell>
-                                                                {t.entrada ? (
-                                                                    <div className="flex items-center gap-1.5">
-                                                                        <span className="text-sm">{formatHoraColombia(t.entrada.fecha_hora)}</span>
-                                                                        {llegadaTarde && <Badge variant="destructive" className="text-[10px] px-1 py-0">Tarde</Badge>}
-                                                                    </div>
-                                                                ) : <span className="text-muted-foreground text-sm">—</span>}
-                                                            </TableCell>
-                                                            <TableCell className="text-sm">
-                                                                {t.salida ? (
-                                                                    <div className="flex items-center gap-1.5">
-                                                                        <span>{formatHoraColombia(t.salida.fecha_hora)}</span>
-                                                                        {salidaEnOtroDia && (
-                                                                            <Badge variant="secondary" className="text-[10px] px-1 py-0 bg-blue-100 text-blue-700">
-                                                                                +1d
-                                                                            </Badge>
-                                                                        )}
-                                                                    </div>
-                                                                ) : <Badge variant="secondary" className="bg-amber-100 text-amber-700 text-[10px]">Abierto</Badge>}
-                                                            </TableCell>
-                                                            <TableCell className="text-sm">
-                                                                {t.pausas > 0 ? <Badge variant="secondary" className="text-[10px]">{t.pausas}</Badge> : '—'}
-                                                            </TableCell>
-                                                            <TableCell className="text-sm font-medium">
-                                                                {(horas > 0 || minutos > 0) ? `${horas}h ${minutos}m` : <span className="text-muted-foreground">En curso</span>}
-                                                            </TableCell>
-                                                            <TableCell>
-                                                                {idx === 0 && novsDelDia.length > 0 ? (
-                                                                    <Badge variant="secondary" className="bg-purple-100 text-purple-700 text-[10px]">
-                                                                        {novsDelDia[0].tipo_novedad}
-                                                                    </Badge>
-                                                                ) : null}
-                                                            </TableCell>
-                                                            <TableCell className="text-right">
-                                                                <Button variant="ghost" size="sm" className="text-blue-600 text-xs" onClick={(e) => { e.stopPropagation(); handleVerDia(fecha) }}>
-                                                                    Ver detalle
-                                                                </Button>
-                                                            </TableCell>
-                                                        </TableRow>
-                                                    )
-                                                })
-                                            }
-
-                                            // Dia solo con novedad (sin registros)
-                                            return (
-                                                <TableRow key={fecha} className="cursor-pointer hover:bg-slate-50" onClick={() => handleVerDia(fecha)}>
-                                                    <TableCell className="font-medium text-sm">
-                                                        {new Date(fecha + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'short', day: '2-digit', month: 'short' })}
-                                                    </TableCell>
-                                                    <TableCell><span className="text-muted-foreground text-sm">—</span></TableCell>
-                                                    <TableCell><span className="text-muted-foreground text-sm">—</span></TableCell>
-                                                    <TableCell><span className="text-muted-foreground text-sm">—</span></TableCell>
-                                                    <TableCell><span className="text-muted-foreground text-sm">—</span></TableCell>
-                                                    <TableCell>
-                                                        {novsDelDia.length > 0 && (
-                                                            <Badge variant="secondary" className="bg-purple-100 text-purple-700 text-[10px]">
-                                                                {novsDelDia[0].tipo_novedad}
-                                                            </Badge>
-                                                        )}
-                                                    </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <Button variant="ghost" size="sm" className="text-blue-600 text-xs" onClick={(e) => { e.stopPropagation(); handleVerDia(fecha) }}>
-                                                            Ver detalle
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            )
-                                        })}
-                                    </TableBody>
-                                </Table>
-                            )}
-                        </CardContent>
-                    </Card>
+                <TabsContent value="jornadas" className="mt-4">
+                    <JornadasTab jornadas={jornadasMes} />
                 </TabsContent>
 
-                {/* Tab: Detalle por dia */}
-                <TabsContent value="dia" className="mt-4">
-                    <Card>
-                        <CardHeader className="pb-3">
-                            <div className="flex items-center gap-3">
-                                <CardTitle className="text-lg">Detalle del Día</CardTitle>
-                                <Input type="date" value={fechaDetalle} onChange={e => handleVerDia(e.target.value)} className="w-auto" />
-                            </div>
-                        </CardHeader>
-                        <CardContent>
-                            {!fechaDetalle ? (
-                                <p className="text-muted-foreground text-center py-8">Selecciona una fecha o haz click en un día del historial</p>
-                            ) : cargandoDia ? (
-                                <p className="text-muted-foreground text-center py-8">Cargando...</p>
-                            ) : (
-                                <div className="space-y-6">
-                                    {/* Novedades del dia */}
-                                    {(novedadDias[fechaDetalle] || []).length > 0 && (
-                                        <div className="rounded-lg border border-purple-200 bg-purple-50 p-3">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <FileText className="h-4 w-4 text-purple-600" />
-                                                <span className="text-sm font-semibold text-purple-700">Novedades del día</span>
-                                            </div>
-                                            {(novedadDias[fechaDetalle] || []).map((nov: any, i: number) => (
-                                                <div key={i} className="text-sm text-purple-800 mt-1">
-                                                    <Badge variant="secondary" className="bg-purple-200 text-purple-800 text-[10px] mr-2">{nov.tipo_novedad}</Badge>
-                                                    {nov.razon}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-
-                                    {registrosDia.length === 0 && (novedadDias[fechaDetalle] || []).length === 0 ? (
-                                        <p className="text-muted-foreground text-center py-8">Sin actividad para este día</p>
-                                    ) : registrosDia.length > 0 ? (
-                                        <>
-                                            {/* Resumen rapido */}
-                                            {(() => {
-                                                const { horas, minutos, pausaMs } = calcularHorasTurno(registrosDia)
-                                                const pausaMin = Math.floor(pausaMs / 60000)
-                                                return (
-                                                    <div className="grid grid-cols-3 gap-3">
-                                                        <MiniStat label="Trabajado" value={`${horas}h ${minutos}m`} accent="blue" />
-                                                        <MiniStat label="Pausas" value={`${Math.floor(pausaMin / 60)}h ${pausaMin % 60}m`} accent="amber" />
-                                                        <MiniStat label="Registros" value={String(registrosDia.length)} accent="slate" />
-                                                    </div>
-                                                )
-                                            })()}
-
-                                            {/* Timeline visual */}
-                                            <div className="relative pl-8 space-y-0">
-                                                {registrosDia.map((reg: any, i: number) => {
-                                                    const config = tipoConfig[reg.tipo as TipoRegistro] || tipoConfig.ENTRADA
-                                                    const Icon = config.icon
-                                                    const isLast = i === registrosDia.length - 1
-
-                                                    return (
-                                                        <div key={reg.row_number} className="relative pb-6">
-                                                            {!isLast && <div className="absolute left-[-16px] top-8 bottom-0 w-px bg-slate-200" />}
-                                                            <div className={`absolute left-[-24px] top-1.5 h-4 w-4 rounded-full ${config.bg} flex items-center justify-center ring-2 ring-white`}>
-                                                                <div className={`h-2 w-2 rounded-full ${config.color.replace('text-', 'bg-')}`} />
-                                                            </div>
-                                                            <div className="flex items-start gap-3">
-                                                                <div className={`p-2 rounded-lg ${config.bg}`}>
-                                                                    <Icon className={`h-4 w-4 ${config.color}`} />
-                                                                </div>
-                                                                <div className="flex-1">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className={`text-sm font-semibold ${config.color}`}>{config.label}</span>
-                                                                        <span className="text-sm text-muted-foreground">{formatHoraColombia(reg.fecha_hora)}</span>
-                                                                    </div>
-                                                                    <p className="text-xs text-muted-foreground mt-0.5">{reg.operacion}</p>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )
-                                                })}
-                                            </div>
-                                        </>
-                                    ) : null}
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
+                <TabsContent value="bolsa" className="mt-4">
+                    <BolsaTab movimientos={movimientosBolsa} saldoActual={bolsaSaldo} />
                 </TabsContent>
 
-                {/* Tab: Novedades */}
+                <TabsContent value="aprobaciones" className="mt-4">
+                    <AprobacionesTab
+                        aprobaciones={aprobaciones}
+                        minutosPendientes={minutosExtrasPendientes}
+                    />
+                </TabsContent>
+
                 <TabsContent value="novedades" className="mt-4">
-                    <Card>
-                        <CardContent className="pt-6">
-                            {novedades.length === 0 ? (
-                                <p className="text-muted-foreground text-center py-8">Sin novedades registradas</p>
-                            ) : (
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Tipo</TableHead>
-                                            <TableHead>Fecha</TableHead>
-                                            <TableHead>Razón</TableHead>
-                                            <TableHead>Remunerable</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {novedades.map((nov: any) => (
-                                            <TableRow key={nov.id}>
-                                                <TableCell>
-                                                    <Badge variant="secondary" className="text-xs bg-purple-100 text-purple-800">
-                                                        {nov.tipo_novedad}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="text-sm">
-                                                    {nov.start_date && nov.end_date
-                                                        ? `${formatFechaCorta(nov.start_date)} — ${formatFechaCorta(nov.end_date)}`
-                                                        : nov.fecha_novedad ? formatFechaCorta(nov.fecha_novedad) : '—'
-                                                    }
-                                                </TableCell>
-                                                <TableCell className="text-sm max-w-xs truncate">{nov.razon || '—'}</TableCell>
-                                                <TableCell>
-                                                    {nov.remunerable
-                                                        ? <Badge variant="secondary" className="bg-emerald-100 text-emerald-800 text-[10px]">Sí</Badge>
-                                                        : <Badge variant="secondary" className="text-[10px]">No</Badge>
-                                                    }
-                                                </TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            )}
-                        </CardContent>
-                    </Card>
+                    <NovedadesTab novedades={novedades} />
                 </TabsContent>
             </Tabs>
         </div>
     )
 }
 
-function InfoRow({ icon: Icon, label, value }: { icon: typeof User; label: string; value: string }) {
+// ═══════════════════════════════════════════════════════════════════════
+// HEADER
+// ═══════════════════════════════════════════════════════════════════════
+
+function HeaderEmpleado({
+    empleado,
+    configOperacion,
+}: {
+    empleado: Props['empleado']
+    configOperacion: Props['configOperacion']
+}) {
     return (
-        <div className="flex items-center gap-2">
-            <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-            <span className="text-muted-foreground">{label}:</span>
-            <span className="font-medium ml-auto text-right">{value}</span>
+        <Card>
+            <CardContent className="pt-6">
+                <div className="flex flex-col md:flex-row md:items-center gap-4">
+                    <Avatar className="h-20 w-20 shrink-0">
+                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-xl font-semibold">
+                            {iniciales(empleado.nombre)}
+                        </AvatarFallback>
+                    </Avatar>
+
+                    <div className="flex-1 min-w-0">
+                        <h1 className="text-2xl font-bold text-slate-900 truncate">{empleado.nombre}</h1>
+                        <p className="text-sm text-slate-500 font-mono">CC {empleado.id}</p>
+                        <div className="flex flex-wrap items-center gap-3 mt-2 text-sm">
+                            {empleado.operacion && (
+                                <span className="inline-flex items-center gap-1 text-slate-700">
+                                    <Briefcase className="h-3.5 w-3.5" /> {empleado.operacion}
+                                </span>
+                            )}
+                            {empleado.cargo && (
+                                <span className="inline-flex items-center gap-1 text-slate-700">
+                                    <User className="h-3.5 w-3.5" /> {empleado.cargo}
+                                </span>
+                            )}
+                            <Badge
+                                className={
+                                    empleado.status === 'activo'
+                                        ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-100'
+                                        : 'bg-slate-200 text-slate-600'
+                                }
+                            >
+                                {empleado.status}
+                            </Badge>
+                        </div>
+                    </div>
+
+                    {configOperacion && (
+                        <div className="border-l-0 md:border-l md:pl-4 text-xs text-slate-500 space-y-1">
+                            <div className="flex items-center gap-1">
+                                <Target className="h-3 w-3" />
+                                <span>Límite diario: <b>{configOperacion.limite_horas}h</b></span>
+                            </div>
+                            {configOperacion.minutos_almuerzo > 0 && (
+                                <div className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    <span>Almuerzo: <b>{configOperacion.minutos_almuerzo}min</b></span>
+                                </div>
+                            )}
+                            {configOperacion.turnos.length > 0 && (
+                                <div className="flex items-center gap-1">
+                                    <Sun className="h-3 w-3" />
+                                    <span>{configOperacion.turnos.length} turno(s) disponibles</span>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// BANNER ALERTAS
+// ═══════════════════════════════════════════════════════════════════════
+
+function BannerAlertas({ alertas }: { alertas: Alerta[] }) {
+    const grupos = useMemo(() => {
+        const g = new Map<TipoAlerta, Alerta[]>()
+        for (const a of alertas) {
+            if (!g.has(a.tipo)) g.set(a.tipo, [])
+            g.get(a.tipo)!.push(a)
+        }
+        return g
+    }, [alertas])
+
+    return (
+        <div className="space-y-2.5">
+            {Array.from(grupos.entries()).map(([tipo, items]) => {
+                const cfg = ALERTA_CFG[tipo]
+                return (
+                    <div
+                        key={tipo}
+                        className={`border rounded-xl p-4 md:p-5 flex items-start gap-4 ${cfg.cls}`}
+                    >
+                        <div className="shrink-0 rounded-lg bg-white/70 p-2">
+                            <cfg.Icon className="h-5 w-5" />
+                        </div>
+                        <div className="flex-1 min-w-0 space-y-1">
+                            <p className="font-semibold text-sm leading-tight">
+                                {cfg.label}
+                                <span className="ml-2 text-xs font-normal opacity-75">
+                                    · {items.length} alerta(s) sin leer
+                                </span>
+                            </p>
+                            <p className="text-xs opacity-90 leading-relaxed">
+                                {items[0].mensaje ?? 'Revisar con el coordinador.'}
+                            </p>
+                        </div>
+                    </div>
+                )
+            })}
         </div>
     )
 }
 
-function MiniStat({ label, value, accent }: { label: string; value: string; accent: string }) {
-    const colorMap: Record<string, string> = {
-        blue: 'bg-blue-50 text-blue-700',
-        green: 'bg-emerald-50 text-emerald-700',
-        emerald: 'bg-emerald-50 text-emerald-700',
-        red: 'bg-red-50 text-red-700',
-        amber: 'bg-amber-50 text-amber-700',
-        purple: 'bg-purple-50 text-purple-700',
-        slate: 'bg-slate-50 text-slate-700',
-    }
+// ═══════════════════════════════════════════════════════════════════════
+// KPI CARD
+// ═══════════════════════════════════════════════════════════════════════
+
+function KpiCard({
+    titulo,
+    valor,
+    subtitulo,
+    Icon,
+    valorClass,
+    tendenciaIcon: TendenciaIcon,
+}: {
+    titulo: string
+    valor: string
+    subtitulo: string
+    Icon: typeof Clock
+    valorClass?: string
+    tendenciaIcon?: typeof TrendingUp
+}) {
     return (
-        <div className={`rounded-lg p-3 ${colorMap[accent] || colorMap.slate}`}>
-            <p className="text-[11px] font-medium opacity-70">{label}</p>
-            <p className="font-bold text-lg mt-0.5">{value}</p>
+        <Card>
+            <CardHeader className="pb-2">
+                <CardTitle className="text-xs font-medium text-slate-500 flex items-center gap-2 uppercase tracking-wide">
+                    <Icon className="h-3.5 w-3.5" />
+                    {titulo}
+                </CardTitle>
+            </CardHeader>
+            <CardContent>
+                <div className="flex items-baseline gap-2">
+                    {TendenciaIcon && <TendenciaIcon className={`h-4 w-4 ${valorClass ?? ''}`} />}
+                    <span className={`text-2xl font-bold ${valorClass ?? 'text-slate-800'}`}>
+                        {valor}
+                    </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">{subtitulo}</p>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CUMPLIMIENTO DOMINICAL (44h)
+// ═══════════════════════════════════════════════════════════════════════
+
+function CumplimientoDominical({
+    semana,
+    porcentaje,
+    minutosPactados,
+}: {
+    semana: SemanaDominical
+    porcentaje: number
+    minutosPactados: number
+}) {
+    const trabajadas = semana.minutos_ordinarios
+    const novedades = semana.minutos_novedades_remuneradas
+    const total = semana.total_minutos_cumplimiento
+    const faltantes = Math.max(0, minutosPactados - total)
+
+    const pctTrabajadas = Math.min(100, (trabajadas / minutosPactados) * 100)
+    const pctNovedades = Math.min(100 - pctTrabajadas, (novedades / minutosPactados) * 100)
+
+    return (
+        <Card className="border-l-4 border-l-blue-500">
+            <CardHeader className="pb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="min-w-0">
+                        <CardTitle className="text-base flex items-center gap-2">
+                            <Target className="h-4 w-4 text-blue-600 shrink-0" />
+                            Cumplimiento semanal (Ley 44h)
+                        </CardTitle>
+                        <p className="text-xs text-slate-500 mt-1">
+                            Semana del {fechaSoloFecha(semana.semana_inicio)} al {fechaSoloFecha(semana.semana_fin)}
+                        </p>
+                    </div>
+                    {semana.paga_domingo === true && (
+                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1 px-3 py-1">
+                            <CheckCircle2 className="h-3 w-3" /> Paga domingo
+                        </Badge>
+                    )}
+                    {semana.paga_domingo === false && (
+                        <Badge className="bg-red-100 text-red-700 hover:bg-red-100 gap-1 px-3 py-1">
+                            <XCircle className="h-3 w-3" /> No paga domingo
+                        </Badge>
+                    )}
+                </div>
+            </CardHeader>
+
+            <CardContent className="space-y-5">
+                {/* Barra de progreso segmentada con porcentaje encima */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-600">Progreso a 44h pactadas</span>
+                        <span className="font-semibold text-slate-800 tabular-nums">{porcentaje}%</span>
+                    </div>
+                    <div className="h-3 rounded-full bg-slate-100 overflow-hidden flex">
+                        <div
+                            className="h-full bg-blue-500 transition-all"
+                            style={{ width: `${pctTrabajadas}%` }}
+                            title="Horas trabajadas"
+                        />
+                        <div
+                            className="h-full bg-emerald-500 transition-all"
+                            style={{ width: `${pctNovedades}%` }}
+                            title="Novedades remuneradas"
+                        />
+                    </div>
+                </div>
+
+                {/* Desglose */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <Metric label="Trabajadas" valor={fmtMinutos(trabajadas)} color="bg-blue-500" />
+                    <Metric label="Novedades" valor={fmtMinutos(novedades)} color="bg-emerald-500" />
+                    <Metric label="Total" valor={fmtMinutos(total)} color="bg-slate-700" strong />
+                    <Metric
+                        label={faltantes > 0 ? 'Faltantes' : 'Excedente'}
+                        valor={fmtMinutos(faltantes > 0 ? faltantes : total - minutosPactados)}
+                        color={faltantes > 0 ? 'bg-red-500' : 'bg-emerald-600'}
+                    />
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+function Metric({
+    label,
+    valor,
+    color,
+    strong,
+}: {
+    label: string
+    valor: string
+    color: string
+    strong?: boolean
+}) {
+    return (
+        <div className="space-y-1">
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+                <span className={`inline-block w-2 h-2 rounded-full ${color}`} />
+                <span>{label}</span>
+            </div>
+            <p className={`font-mono tabular-nums text-sm ${strong ? 'font-bold text-slate-900' : 'text-slate-700'}`}>
+                {valor}
+            </p>
         </div>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DESGLOSE MENSUAL (9 tipos de hora)
+// ═══════════════════════════════════════════════════════════════════════
+
+function DesgloseMensual({ horasMes }: { horasMes: ResumenEmpleadoPeriodo }) {
+    const rows = DESGLOSE_TIPOS.map((t) => {
+        const minutos = (horasMes.detalleMinutos as any)[t.key] ?? 0
+        const horas = horasMes.horasFormato[t.key as keyof typeof horasMes.horasFormato]
+        const valor = (horasMes.detalleValores as Record<string, number>)[
+            t.concepto === 'extra' ? 'extrasOrdinarias' :
+            t.concepto === 'extraNocturno' ? 'extrasNocturnas' :
+            t.concepto === 'nocturno' ? 'nocturnas' :
+            t.concepto === 'domingo' ? 'domingos' :
+            t.concepto === 'festivo' ? 'festivos' :
+            t.concepto === 'domingoFestivoNocturno' ? 'domingosFestivosNocturnos' :
+            t.concepto === 'extraDominicalFestivo' ? 'extrasDominicalFestivo' :
+            t.concepto === 'extraNocturnaDominicalFestivo' ? 'extrasNocturnaDominicalFestivo' :
+            'normal'
+        ] ?? 0
+        return { ...t, minutos, horas, valor }
+    }).filter((r) => r.minutos > 0)
+
+    if (rows.length === 0) {
+        return (
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-base">Desglose de horas del mes</CardTitle>
+                </CardHeader>
+                <CardContent>
+                    <p className="text-sm text-slate-500">Aún no hay jornadas cerradas este mes.</p>
+                </CardContent>
+            </Card>
+        )
+    }
+
+    return (
+        <Card>
+            <CardHeader className="pb-3">
+                <CardTitle className="text-base">Desglose por tipo de hora</CardTitle>
+                <p className="text-xs text-slate-500">
+                    Solo se muestran los tipos con horas registradas este mes.
+                </p>
+            </CardHeader>
+            <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {rows.map((r) => (
+                        <div
+                            key={r.key}
+                            className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-slate-50/70 hover:bg-slate-100/60 transition-colors"
+                        >
+                            <span className={`inline-flex items-center px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide rounded-md ${r.color} shrink-0`}>
+                                {r.label}
+                            </span>
+                            <div className="flex items-center gap-4 shrink-0">
+                                <span className="font-mono tabular-nums text-sm text-slate-800 min-w-[56px] text-right">
+                                    {r.horas}
+                                </span>
+                                <span className="font-mono tabular-nums text-xs text-emerald-600 min-w-[95px] text-right">
+                                    {fmtCOP(r.valor)}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TAB: JORNADAS
+// ═══════════════════════════════════════════════════════════════════════
+
+function JornadasTab({ jornadas }: { jornadas: Jornada[] }) {
+    if (jornadas.length === 0) {
+        return (
+            <EmptyState
+                icon={<Calendar className="h-10 w-10 text-slate-300" />}
+                titulo="Sin jornadas este mes"
+                subtitulo="Cuando el empleado marque ENTRADA y SALIDA aparecerá acá."
+            />
+        )
+    }
+
+    return (
+        <Card>
+            <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Entrada</TableHead>
+                                <TableHead>Salida</TableHead>
+                                <TableHead>Horas pagables</TableHead>
+                                <TableHead>Desglose</TableHead>
+                                <TableHead>Operación</TableHead>
+                                <TableHead>Estado</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {jornadas.map((j) => {
+                                const badge = ESTADO_JORNADA_CFG[j.estado]
+                                return (
+                                    <TableRow key={j.id} className={j.alerta_critica ? 'bg-orange-50/40' : ''}>
+                                        <TableCell className="font-medium">
+                                            {fechaLargaColombia(j.entrada)}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-sm">
+                                            {horaColombia(j.entrada)}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-sm">
+                                            {j.salida ? horaColombia(j.salida) : '—'}
+                                        </TableCell>
+                                        <TableCell className="font-mono font-semibold">
+                                            {fmtMinutos(j.minutos_total)}
+                                            {j.minutos_almuerzo_descontados > 0 && (
+                                                <div className="text-[10px] text-slate-400 font-normal">
+                                                    -{j.minutos_almuerzo_descontados}min almuerzo
+                                                </div>
+                                            )}
+                                        </TableCell>
+                                        <TableCell>
+                                            <JornadaBadges j={j} />
+                                        </TableCell>
+                                        <TableCell className="text-sm text-slate-600">{j.operacion}</TableCell>
+                                        <TableCell>
+                                            <span
+                                                className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${badge.cls}`}
+                                            >
+                                                <badge.Icon className="h-3 w-3" />
+                                                {badge.label}
+                                            </span>
+                                            {j.alerta_critica && (
+                                                <div className="mt-1 inline-flex items-center gap-1 text-[10px] text-orange-700">
+                                                    <ShieldAlert className="h-3 w-3" /> {`>12h`}
+                                                </div>
+                                            )}
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            })}
+                        </TableBody>
+                    </Table>
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+function JornadaBadges({ j }: { j: Jornada }) {
+    const tipos: { min: number; label: string; cls: string }[] = [
+        { min: j.minutos_extras_ordinarias, label: 'Extra', cls: 'bg-emerald-100 text-emerald-700' },
+        { min: j.minutos_nocturnas, label: 'Noct', cls: 'bg-indigo-100 text-indigo-700' },
+        { min: j.minutos_extras_nocturnas, label: 'Ex Noct', cls: 'bg-pink-100 text-pink-700' },
+        { min: j.minutos_domingos, label: 'Dom', cls: 'bg-blue-100 text-blue-700' },
+        { min: j.minutos_festivos, label: 'Fest', cls: 'bg-amber-100 text-amber-800' },
+        { min: j.minutos_domingos_festivos_nocturnos, label: 'D/F N', cls: 'bg-violet-100 text-violet-700' },
+        { min: j.minutos_extras_dominical_festivo, label: 'Ex D/F', cls: 'bg-orange-100 text-orange-700' },
+        { min: j.minutos_extras_nocturna_dominical_festivo, label: 'Ex D/F N', cls: 'bg-red-100 text-red-700' },
+    ].filter((t) => t.min > 0)
+
+    if (tipos.length === 0) return <span className="text-xs text-slate-400">Solo ordinarias</span>
+
+    return (
+        <div className="flex flex-wrap gap-1.5">
+            {tipos.map((t) => (
+                <span
+                    key={t.label}
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 text-[11px] font-medium rounded-md ${t.cls}`}
+                    title={`${t.label}: ${fmtMinutos(t.min)}`}
+                >
+                    <span className="font-semibold">{t.label}</span>
+                    <span className="font-mono tabular-nums opacity-80">{fmtMinutos(t.min)}</span>
+                </span>
+            ))}
+        </div>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TAB: BOLSA DE HORAS
+// ═══════════════════════════════════════════════════════════════════════
+
+function BolsaTab({
+    movimientos,
+    saldoActual,
+}: {
+    movimientos: Movimiento[]
+    saldoActual: number
+}) {
+    if (movimientos.length === 0) {
+        return (
+            <EmptyState
+                icon={<Wallet className="h-10 w-10 text-slate-300" />}
+                titulo="Sin movimientos en la bolsa"
+                subtitulo="Los excedentes, déficits y compensaciones aparecerán acá."
+            />
+        )
+    }
+
+    return (
+        <Card>
+            <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <CardTitle className="text-base">Historial de bolsa</CardTitle>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                            Saldo actual: <span className="font-semibold font-mono">{fmtMinutos(saldoActual, { conSigno: true })}</span>
+                        </p>
+                    </div>
+                </div>
+            </CardHeader>
+            <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Motivo</TableHead>
+                                <TableHead>Cambio</TableHead>
+                                <TableHead>Antes</TableHead>
+                                <TableHead>Después</TableHead>
+                                <TableHead>Nota</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {movimientos.map((m) => {
+                                const cfg = MOTIVO_CFG[m.motivo]
+                                const toneClass =
+                                    cfg.tone === 'pos'
+                                        ? 'text-emerald-600'
+                                        : cfg.tone === 'neg'
+                                            ? 'text-red-600'
+                                            : 'text-slate-600'
+                                return (
+                                    <TableRow key={m.id}>
+                                        <TableCell className="text-sm">
+                                            {fechaCortaColombia(m.created_at)}
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                                                <cfg.Icon className="h-3 w-3" />
+                                                {cfg.label}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell className={`font-mono font-semibold ${toneClass}`}>
+                                            {fmtMinutos(m.minutos, { conSigno: true })}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-xs text-slate-500">
+                                            {fmtMinutos(m.saldo_antes, { conSigno: true })}
+                                        </TableCell>
+                                        <TableCell className="font-mono text-sm font-semibold">
+                                            {fmtMinutos(m.saldo_despues, { conSigno: true })}
+                                        </TableCell>
+                                        <TableCell className="text-xs text-slate-500 max-w-xs truncate">
+                                            {m.nota ?? '—'}
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            })}
+                        </TableBody>
+                    </Table>
+                </div>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TAB: APROBACIONES
+// ═══════════════════════════════════════════════════════════════════════
+
+function AprobacionesTab({
+    aprobaciones,
+    minutosPendientes,
+}: {
+    aprobaciones: Aprobacion[]
+    minutosPendientes: number
+}) {
+    if (aprobaciones.length === 0) {
+        return (
+            <EmptyState
+                icon={<CheckCircle2 className="h-10 w-10 text-slate-300" />}
+                titulo="Sin aprobaciones registradas"
+                subtitulo="Cuando el empleado genere horas extra se crearán solicitudes de aprobación."
+            />
+        )
+    }
+
+    return (
+        <div className="space-y-3">
+            {minutosPendientes > 0 && (
+                <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-sm">
+                    <Clock className="h-4 w-4" />
+                    <span>
+                        <b>{fmtMinutos(minutosPendientes)}</b> de horas extra pendientes de aprobación del coordinador.
+                    </span>
+                </div>
+            )}
+            <Card>
+                <CardContent className="p-0">
+                    <Table>
+                        <TableHeader>
+                            <TableRow>
+                                <TableHead>Fecha</TableHead>
+                                <TableHead>Minutos</TableHead>
+                                <TableHead>Estado</TableHead>
+                                <TableHead>Nota coordinador</TableHead>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                            {aprobaciones.map((a) => {
+                                const cfg = ESTADO_APROBACION_CFG[a.estado]
+                                return (
+                                    <TableRow key={a.id}>
+                                        <TableCell className="text-sm">{fechaCortaColombia(a.created_at)}</TableCell>
+                                        <TableCell className="font-mono font-semibold">
+                                            {fmtMinutos(a.minutos_solicitados)}
+                                        </TableCell>
+                                        <TableCell>
+                                            <span className={`text-xs px-2 py-0.5 rounded border ${cfg.cls}`}>
+                                                {cfg.label}
+                                            </span>
+                                        </TableCell>
+                                        <TableCell className="text-xs text-slate-600 max-w-xs truncate">
+                                            {a.nota_coordinador ?? '—'}
+                                        </TableCell>
+                                    </TableRow>
+                                )
+                            })}
+                        </TableBody>
+                    </Table>
+                </CardContent>
+            </Card>
+        </div>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// TAB: NOVEDADES
+// ═══════════════════════════════════════════════════════════════════════
+
+function NovedadesTab({ novedades }: { novedades: Novedad[] }) {
+    if (novedades.length === 0) {
+        return (
+            <EmptyState
+                icon={<FileText className="h-10 w-10 text-slate-300" />}
+                titulo="Sin novedades registradas"
+                subtitulo="Acá verás incapacidades, licencias, compensaciones y demás registros del coordinador."
+            />
+        )
+    }
+
+    return (
+        <Card>
+            <CardContent className="p-0">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>Tipo</TableHead>
+                            <TableHead>Fecha</TableHead>
+                            <TableHead>Rango</TableHead>
+                            <TableHead>Pago</TableHead>
+                            <TableHead>Valor</TableHead>
+                            <TableHead>Descripción</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {novedades.map((n) => (
+                            <TableRow key={n.id}>
+                                <TableCell>
+                                    <Badge variant="secondary" className="text-[10px] uppercase">
+                                        {n.tipo_novedad.replace(/_/g, ' ')}
+                                    </Badge>
+                                    {n.codigo_causa && (
+                                        <div className="text-[10px] text-slate-500 mt-1">EPS: {n.codigo_causa}</div>
+                                    )}
+                                </TableCell>
+                                <TableCell className="text-sm">{fechaSoloFecha(n.fecha_novedad)}</TableCell>
+                                <TableCell className="text-xs">
+                                    {n.fecha_inicio && n.fecha_fin
+                                        ? `${fechaSoloFecha(n.fecha_inicio)} → ${fechaSoloFecha(n.fecha_fin)}`
+                                        : '—'}
+                                </TableCell>
+                                <TableCell>
+                                    {n.es_pagado ? (
+                                        <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1">
+                                            <CheckCircle2 className="h-3 w-3" /> Sí
+                                        </Badge>
+                                    ) : (
+                                        <Badge variant="outline" className="text-slate-500">
+                                            No
+                                        </Badge>
+                                    )}
+                                </TableCell>
+                                <TableCell className="font-mono text-xs text-emerald-700">
+                                    {n.valor_monetario ? fmtCOP(Number(n.valor_monetario)) : '—'}
+                                </TableCell>
+                                <TableCell className="text-xs text-slate-600 max-w-xs truncate">
+                                    {n.descripcion ?? '—'}
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                    </TableBody>
+                </Table>
+            </CardContent>
+        </Card>
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// EMPTY STATE
+// ═══════════════════════════════════════════════════════════════════════
+
+function EmptyState({
+    icon,
+    titulo,
+    subtitulo,
+}: {
+    icon: React.ReactNode
+    titulo: string
+    subtitulo: string
+}) {
+    return (
+        <Card>
+            <CardContent className="py-12 flex flex-col items-center text-center gap-2">
+                {icon}
+                <h3 className="font-semibold text-slate-700">{titulo}</h3>
+                <p className="text-xs text-slate-500 max-w-sm">{subtitulo}</p>
+            </CardContent>
+        </Card>
     )
 }

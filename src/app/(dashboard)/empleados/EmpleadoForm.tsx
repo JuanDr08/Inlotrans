@@ -26,24 +26,16 @@ export function EmpleadoForm({
 
     const isCoordinador = rol === 'coordinador' && !!operacionFija
 
-    // Select values
-    const [dia, setDia] = useState('')
-    const [mes, setMes] = useState('')
-    const [anio, setAnio] = useState('')
+    const [birthdate, setBirthdate] = useState('')
     const [operacion, setOperacion] = useState(isCoordinador ? operacionFija : '')
     const [turnoId, setTurnoId] = useState('')
     const [turnos, setTurnos] = useState<Turno[]>([])
     const [turnosLoading, setTurnosLoading] = useState(false)
 
-    const dias = Array.from({ length: 31 }, (_, i) => String(i + 1).padStart(2, '0'))
-    const meses = [
-        { label: 'Enero', val: '01' }, { label: 'Febrero', val: '02' }, { label: 'Marzo', val: '03' },
-        { label: 'Abril', val: '04' }, { label: 'Mayo', val: '05' }, { label: 'Junio', val: '06' },
-        { label: 'Julio', val: '07' }, { label: 'Agosto', val: '08' }, { label: 'Septiembre', val: '09' },
-        { label: 'Octubre', val: '10' }, { label: 'Noviembre', val: '11' }, { label: 'Diciembre', val: '12' }
-    ]
-    const currentYear = new Date().getFullYear()
-    const anios = Array.from({ length: 100 }, (_, i) => String(currentYear - i))
+    // Límites razonables para la fecha de nacimiento: entre hace 100 años y hace 16 (edad mínima laboral CO)
+    const hoy = new Date()
+    const maxDate = new Date(hoy.getFullYear() - 16, hoy.getMonth(), hoy.getDate()).toISOString().slice(0, 10)
+    const minDate = new Date(hoy.getFullYear() - 100, hoy.getMonth(), hoy.getDate()).toISOString().slice(0, 10)
 
     // Cargar turnos cuando cambia la operacion
     useEffect(() => {
@@ -68,20 +60,18 @@ export function EmpleadoForm({
     async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault()
 
-        if (!dia || !mes || !anio) {
-            toast.error('Seleccione la fecha de nacimiento completa')
+        if (!birthdate) {
+            toast.error('Ingresá la fecha de nacimiento.')
             return
         }
-
         if (!operacion) {
-            toast.error('Seleccione una operación')
+            toast.error('Seleccioná una operación.')
             return
         }
 
         setIsLoading(true)
         const form = event.currentTarget as HTMLFormElement
         const formData = new FormData(form)
-        const birthdate = `${anio}-${mes}-${dia}`
         formData.append('birthdate', birthdate)
         formData.append('operacion', operacion)
         if (turnoId) formData.append('turno_id', turnoId)
@@ -93,11 +83,9 @@ export function EmpleadoForm({
         if (!result.success) {
             toast.error(result.error)
         } else {
-            toast.success('Empleado registrado exitosamente')
+            toast.success('Empleado registrado exitosamente.')
             form.reset()
-            setDia('')
-            setMes('')
-            setAnio('')
+            setBirthdate('')
             setOperacion(isCoordinador ? operacionFija : '')
             setTurnoId('')
             router.refresh()
@@ -127,35 +115,17 @@ export function EmpleadoForm({
                     </div>
 
                     <div className="space-y-2">
-                        <Label>Fecha de Nacimiento *</Label>
-                        <div className="grid grid-cols-3 gap-2">
-                            <Select value={dia} onValueChange={setDia}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Día" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {dias.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={mes} onValueChange={setMes}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Mes" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {meses.map(m => <SelectItem key={m.val} value={m.val}>{m.label}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-
-                            <Select value={anio} onValueChange={setAnio}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Año" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    {anios.map(a => <SelectItem key={a} value={a}>{a}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </div>
+                        <Label htmlFor="birthdate">Fecha de Nacimiento *</Label>
+                        <Input
+                            id="birthdate"
+                            type="date"
+                            value={birthdate}
+                            onChange={(e) => setBirthdate(e.target.value)}
+                            min={minDate}
+                            max={maxDate}
+                            required
+                        />
+                        <p className="text-xs text-slate-500">Edad mínima: 16 años.</p>
                     </div>
 
                     <div className="space-y-2">

@@ -10,6 +10,9 @@ export type Operacion = {
     id: string
     nombre: string
     status: boolean
+    limite_horas: 8 | 12
+    max_extras_dia: number
+    minutos_almuerzo: number
     created_at?: string
 }
 
@@ -75,19 +78,30 @@ export async function upsertOperacion(operacion: Partial<Operacion>) {
         // Es actualización
         const { error } = await supabase
             .from('operaciones')
-            .update({ nombre: operacion.nombre, status: operacion.status })
+            .update({
+                nombre: operacion.nombre,
+                status: operacion.status,
+                limite_horas: operacion.limite_horas ?? 8,
+                max_extras_dia: operacion.max_extras_dia ?? 2,
+                minutos_almuerzo: operacion.minutos_almuerzo ?? 0,
+            })
             .eq('id', operacion.id)
 
         if (error) return { success: false, error: error.message }
     } else {
         // Es Inserción nueva
-        // Validamos primero que no exista el nombre
         const { data: existente } = await supabase.from('operaciones').select('id').eq('nombre', operacion.nombre).single()
         if (existente) return { success: false, error: 'Ya existe una operación con ese nombre.' }
 
         const { error } = await supabase
             .from('operaciones')
-            .insert({ nombre: operacion.nombre, status: operacion.status ?? true })
+            .insert({
+                nombre: operacion.nombre,
+                status: operacion.status ?? true,
+                limite_horas: operacion.limite_horas ?? 8,
+                max_extras_dia: operacion.max_extras_dia ?? 2,
+                minutos_almuerzo: operacion.minutos_almuerzo ?? 0,
+            })
 
         if (error) return { success: false, error: error.message }
     }

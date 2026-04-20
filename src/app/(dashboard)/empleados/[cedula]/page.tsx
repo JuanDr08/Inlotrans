@@ -1,7 +1,17 @@
 import { getUserProfile } from '@/lib/auth'
 import { redirect, notFound } from 'next/navigation'
-import { getEmpleadoDetalle, getRegistrosRango, getNovedadesEmpleado } from './actions'
-import { calcularHorasUsuarioPorPeriodo } from '@/lib/calculoHoras'
+import {
+    getEmpleadoDetalle,
+    getJornadasRango,
+    getNovedadesEmpleado,
+    getMovimientosBolsa,
+    getAprobacionesEmpleado,
+    getAlertasEmpleado,
+    getSemanaDominicalActual,
+    getTurnoOperacion,
+} from './actions'
+import { calcularHorasUsuarioEnPeriodo } from '@/lib/reportes'
+import { obtenerBolsaHoras } from '@/lib/jornadas'
 import { EmpleadoDetalleClient } from './EmpleadoDetalleClient'
 
 export default async function EmpleadoDetallePage({
@@ -17,29 +27,50 @@ export default async function EmpleadoDetallePage({
     const empleado = await getEmpleadoDetalle(cedula)
     if (!empleado) notFound()
 
-    // Coordinador solo puede ver empleados de su operacion
     if (profile.rol === 'coordinador' && empleado.operacion !== profile.operacion_nombre) {
         redirect('/empleados')
     }
 
-    // Datos del mes actual
+    // Rango del mes actual (en hora local del server)
     const now = new Date()
     const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1)
     const mesFin = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
 
-    // Fetch en paralelo: registros del mes, novedades, calculo de horas
-    const [registrosMes, novedades, horasMes] = await Promise.all([
-        getRegistrosRango(cedula, mesInicio.toISOString(), mesFin.toISOString()),
+    const [
+        jornadasMes,
+        novedades,
+        horasMes,
+        bolsaSaldo,
+        movimientosBolsa,
+        aprobaciones,
+        alertas,
+        semanaDominical,
+        configOperacion,
+    ] = await Promise.all([
+        getJornadasRango(cedula, mesInicio.toISOString(), mesFin.toISOString()),
         getNovedadesEmpleado(cedula),
-        calcularHorasUsuarioPorPeriodo(cedula, mesInicio, mesFin).catch(() => null)
+        calcularHorasUsuarioEnPeriodo(cedula, mesInicio, mesFin).catch(() => null),
+        obtenerBolsaHoras(cedula).catch(() => 0),
+        getMovimientosBolsa(cedula, 15),
+        getAprobacionesEmpleado(cedula, 10),
+        getAlertasEmpleado(cedula),
+        getSemanaDominicalActual(cedula),
+        getTurnoOperacion(empleado.operacion),
     ])
 
     return (
         <EmpleadoDetalleClient
             empleado={empleado}
-            registrosMes={registrosMes}
+            jornadasMes={jornadasMes}
             novedades={novedades}
             horasMes={horasMes}
+            bolsaSaldo={bolsaSaldo}
+            movimientosBolsa={movimientosBolsa}
+            aprobaciones={aprobaciones}
+            alertas={alertas}
+            semanaDominical={semanaDominical}
+            configOperacion={configOperacion}
+            mesRango={{ inicio: mesInicio.toISOString(), fin: mesFin.toISOString() }}
             rol={profile.rol}
         />
     )

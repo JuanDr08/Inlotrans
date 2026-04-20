@@ -25,14 +25,33 @@ export default async function NovedadesPage() {
     const { data: novedadesRaw } = await supabase
         .from('novedades')
         .select(`
-            *,
+            id, usuario_id, usuario_nombre, tipo_novedad,
+            fecha_novedad, fecha_inicio, fecha_fin,
+            es_pagado, codigo_causa, valor_monetario, descripcion, created_at,
             usuario:usuarios(nombre, operacion)
         `)
-        .order('fecha_inicio', { ascending: false })
+        .order('fecha_novedad', { ascending: false })
 
-    let novedades = novedadesRaw
+    type NovedadRow = {
+        id: string
+        usuario_id: string
+        usuario_nombre: string
+        tipo_novedad: string
+        fecha_novedad: string
+        fecha_inicio: string | null
+        fecha_fin: string | null
+        es_pagado: boolean
+        codigo_causa: number | null
+        valor_monetario: number | null
+        descripcion: string | null
+        usuario?: { nombre?: string; operacion?: string } | { nombre?: string; operacion?: string }[]
+    }
+    let novedades = (novedadesRaw ?? []) as NovedadRow[]
     if (profile.rol === 'coordinador') {
-        novedades = novedades?.filter(n => n.usuario?.operacion === profile.operacion_nombre) ?? []
+        novedades = novedades.filter((n) => {
+            const usuario = Array.isArray(n.usuario) ? n.usuario[0] : n.usuario
+            return usuario?.operacion === profile.operacion_nombre
+        })
     }
 
     return (
@@ -80,44 +99,49 @@ export default async function NovedadesPage() {
                                                 </TableCell>
                                             </TableRow>
                                         )}
-                                        {novedades?.map((nov: any) => (
+                                        {novedades?.map((nov) => {
+                                            const usuarioRel = Array.isArray(nov.usuario) ? nov.usuario[0] : nov.usuario
+                                            return (
                                             <TableRow key={nov.id}>
                                                 <TableCell>
-                                                    <div className="font-medium text-sm">{nov.usuario?.nombre || 'Desconocido'}</div>
+                                                    <div className="font-medium text-sm">{usuarioRel?.nombre || nov.usuario_nombre || 'Desconocido'}</div>
                                                     <div className="text-xs text-muted-foreground">{nov.usuario_id}</div>
                                                 </TableCell>
                                                 <TableCell>
-                                                    {nov.tipo_novedad === 'incapacidad' ? (
+                                                    {nov.fecha_inicio && nov.fecha_fin ? (
                                                         <>
-                                                            <div className="text-xs">Del: {new Date(nov.fecha_inicio).toLocaleDateString()}</div>
-                                                            <div className="text-xs">Al: {new Date(nov.fecha_fin).toLocaleDateString()}</div>
+                                                            <div className="text-xs">Del: {new Date(nov.fecha_inicio).toLocaleDateString('es-CO')}</div>
+                                                            <div className="text-xs">Al: {new Date(nov.fecha_fin).toLocaleDateString('es-CO')}</div>
                                                         </>
                                                     ) : (
-                                                        <div className="text-xs">{new Date(nov.fecha_inicio).toLocaleDateString()}</div>
+                                                        <div className="text-xs">{new Date(nov.fecha_novedad).toLocaleDateString('es-CO')}</div>
                                                     )}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <Badge variant={nov.tipo_novedad === 'incapacidad' ? "destructive" : "secondary"} className="text-[10px] uppercase">
-                                                        {nov.tipo_novedad.replace('_', ' ')}
+                                                    <Badge
+                                                        variant={nov.tipo_novedad.startsWith('INCAPACIDAD') ? 'destructive' : 'secondary'}
+                                                        className="text-[10px] uppercase"
+                                                    >
+                                                        {nov.tipo_novedad.replace(/_/g, ' ')}
                                                     </Badge>
                                                     {nov.valor_monetario && (
                                                         <div className="text-xs font-semibold text-emerald-600 mt-1">
-                                                            $ {nov.valor_monetario.toLocaleString()}
+                                                            $ {nov.valor_monetario.toLocaleString('es-CO')}
                                                         </div>
                                                     )}
                                                 </TableCell>
                                                 <TableCell>
-                                                    <p className="max-w-[200px] truncate text-xs text-slate-600" title={nov.notas}>
-                                                        {nov.notas || '-'}
+                                                    <p className="max-w-[200px] truncate text-xs text-slate-600" title={nov.descripcion ?? ''}>
+                                                        {nov.descripcion || '-'}
                                                     </p>
-                                                    {nov.causa_codigo && (
+                                                    {nov.codigo_causa && (
                                                         <span className="text-[10px] bg-slate-100 text-slate-500 px-1 py-0.5 rounded mt-1 inline-block">
-                                                            EPS: {nov.causa_codigo}
+                                                            EPS: {nov.codigo_causa}
                                                         </span>
                                                     )}
                                                 </TableCell>
                                                 <TableCell className="text-right">
-                                                    {nov.es_remunerado ? (
+                                                    {nov.es_pagado ? (
                                                         <Badge variant="outline" className="text-emerald-700 bg-emerald-50 border-emerald-200">Sí</Badge>
                                                     ) : (
                                                         <Badge variant="outline" className="text-slate-500 bg-slate-50">No</Badge>
@@ -129,7 +153,8 @@ export default async function NovedadesPage() {
                                                     </TableCell>
                                                 )}
                                             </TableRow>
-                                        ))}
+                                            )
+                                        })}
                                     </TableBody>
                                 </Table>
                             </div>

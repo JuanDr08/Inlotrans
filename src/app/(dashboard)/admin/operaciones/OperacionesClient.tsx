@@ -13,6 +13,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
     Table,
     TableBody,
@@ -48,7 +49,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
         if (op) {
             setForm({ ...op })
         } else {
-            setForm({ nombre: '', status: true })
+            setForm({ nombre: '', status: true, limite_horas: 8, max_extras_dia: 2, minutos_almuerzo: 0 })
         }
         setOpenModal(true)
     }
@@ -165,6 +166,8 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                             <TableRow className="bg-slate-50">
                                 <TableHead>Nombre de la Operación</TableHead>
                                 <TableHead>Estado</TableHead>
+                                <TableHead>Jornada</TableHead>
+                                <TableHead>Almuerzo</TableHead>
                                 <TableHead>Fecha Creación</TableHead>
                                 <TableHead className="text-right">Acciones</TableHead>
                             </TableRow>
@@ -183,6 +186,12 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                                                 Inactiva
                                             </Badge>
                                         )}
+                                    </TableCell>
+                                    <TableCell className="text-sm">
+                                        <Badge variant="outline">{op.limite_horas ?? 8}h</Badge>
+                                    </TableCell>
+                                    <TableCell className="text-sm text-muted-foreground">
+                                        {op.minutos_almuerzo ? `${op.minutos_almuerzo} min` : '—'}
                                     </TableCell>
                                     <TableCell className="text-muted-foreground text-sm">
                                         {op.created_at ? new Date(op.created_at).toLocaleDateString() : '-'}
@@ -203,7 +212,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
 
                             {initialData.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={4} className="h-24 text-center text-muted-foreground">
+                                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
                                         No hay operaciones configuradas
                                     </TableCell>
                                 </TableRow>
@@ -240,6 +249,48 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                             >
                                 {form.status ? 'Activo' : 'Inactivo'}
                             </Button>
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Límite de Jornada</label>
+                            <Select
+                                value={String(form.limite_horas ?? 8)}
+                                onValueChange={v => setForm({ ...form, limite_horas: parseInt(v) as 8 | 12 })}
+                            >
+                                <SelectTrigger>
+                                    <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="8">8 horas (jornada estándar)</SelectItem>
+                                    <SelectItem value="12">12 horas (turno extendido)</SelectItem>
+                                </SelectContent>
+                            </Select>
+                            <p className="text-xs text-slate-500">Las horas extra se calculan a partir de las 8h (marco legal CO).</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Máx. extras/día</label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    max={16}
+                                    value={form.max_extras_dia ?? 2}
+                                    onChange={e => setForm({ ...form, max_extras_dia: parseInt(e.target.value) || 0 })}
+                                />
+                                <p className="text-xs text-slate-500">Horas extra permitidas por día.</p>
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">Descuento almuerzo</label>
+                                <Input
+                                    type="number"
+                                    min={0}
+                                    max={120}
+                                    value={form.minutos_almuerzo ?? 0}
+                                    onChange={e => setForm({ ...form, minutos_almuerzo: parseInt(e.target.value) || 0 })}
+                                />
+                                <p className="text-xs text-slate-500">Minutos a descontar si jornada &gt; 5h.</p>
+                            </div>
                         </div>
 
                         <div className="pt-4 flex justify-end gap-2">

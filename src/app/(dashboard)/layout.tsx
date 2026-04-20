@@ -11,7 +11,8 @@ import {
     LogOut,
     FileText,
     Briefcase,
-    UserCog
+    UserCog,
+    ShieldCheck
 } from 'lucide-react'
 
 export default async function DashboardLayout({
@@ -34,17 +35,11 @@ export default async function DashboardLayout({
                 <div className="flex h-14 items-center font-bold text-xl px-2">
                     Inlotrans
                 </div>
-                <nav className="flex-1 space-y-2">
-                    <Link href="/">
+                <nav className="flex-1 space-y-1">
+                    <Link href="/admin">
                         <Button variant="ghost" className="w-full justify-start gap-2">
-                            <Clock className="h-4 w-4" />
-                            Asistencia Web
-                        </Button>
-                    </Link>
-                    <Link href="/empleados">
-                        <Button variant="ghost" className="w-full justify-start gap-2">
-                            <Users className="h-4 w-4" />
-                            Empleados
+                            <Settings className="h-4 w-4" />
+                            Administración
                         </Button>
                     </Link>
                     <Link href="/novedades">
@@ -53,28 +48,42 @@ export default async function DashboardLayout({
                             Novedades
                         </Button>
                     </Link>
-                    <Link href="/admin">
+                    <Link href="/aprobaciones">
                         <Button variant="ghost" className="w-full justify-start gap-2">
-                            <Settings className="h-4 w-4" />
-                            Administración
+                            <ShieldCheck className="h-4 w-4" />
+                            Aprobaciones
                         </Button>
                     </Link>
                     {isAdmin && (
-                        <>
-                            <Link href="/admin/operaciones">
-                                <Button variant="ghost" className="w-full justify-start gap-2">
-                                    <Briefcase className="h-4 w-4" />
-                                    Operaciones
-                                </Button>
-                            </Link>
-                            <Link href="/admin/usuarios">
-                                <Button variant="ghost" className="w-full justify-start gap-2">
-                                    <UserCog className="h-4 w-4" />
-                                    Usuarios
-                                </Button>
-                            </Link>
-                        </>
+                        <Link href="/admin/usuarios">
+                            <Button variant="ghost" className="w-full justify-start gap-2">
+                                <UserCog className="h-4 w-4" />
+                                Usuarios
+                            </Button>
+                        </Link>
                     )}
+                    <Link href="/empleados">
+                        <Button variant="ghost" className="w-full justify-start gap-2">
+                            <Users className="h-4 w-4" />
+                            Empleados
+                        </Button>
+                    </Link>
+                    {isAdmin && (
+                        <Link href="/admin/operaciones">
+                            <Button variant="ghost" className="w-full justify-start gap-2">
+                                <Briefcase className="h-4 w-4" />
+                                Operaciones
+                            </Button>
+                        </Link>
+                    )}
+                    <div className="pt-3 mt-3 border-t border-slate-100">
+                        <Link href="/">
+                            <Button variant="ghost" className="w-full justify-start gap-2 text-slate-600">
+                                <Clock className="h-4 w-4" />
+                                Asistencia Web
+                            </Button>
+                        </Link>
+                    </div>
                 </nav>
                 <div className="border-t pt-4">
                     <div className="px-2 mb-2">

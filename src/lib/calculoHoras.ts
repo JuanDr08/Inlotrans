@@ -1,24 +1,51 @@
 import { createClient } from '@/lib/supabase/server'
 
 // ==================================================
-// CACHÉ DE DÍAS FESTIVOS
+// CACHÉ DE DÍAS FESTIVOS (24h TTL por año)
 // ==================================================
 interface CacheFestivo {
     fechas: Date[]
     timestamp: number
 }
 const cacheDiasFestivos: Record<number, CacheFestivo> = {}
-const CACHE_FESTIVOS_DURACION = 24 * 60 * 60 * 1000 // 24 horas
+const CACHE_FESTIVOS_DURACION = 24 * 60 * 60 * 1000
 
 // ==================================================
-// CACHÉ DE TARIFAS
+// CACHÉ DE TARIFAS (5 min TTL)
 // ==================================================
 let cacheTarifas: Record<string, number> | null = null
 let cacheTarifasTimestamp: number | null = null
-const CACHE_TARIFAS_DURACION = 5 * 60 * 1000 // 5 minutos
+const CACHE_TARIFAS_DURACION = 5 * 60 * 1000
 
 // ==================================================
-// FUNCIONES DE PRECISIÓN PARA CÁLCULOS
+// TIPOS PÚBLICOS
+// ==================================================
+export type TipoMinuto =
+    | 'normal'
+    | 'nocturno'
+    | 'extra'
+    | 'extraNocturno'
+    | 'domingo'
+    | 'festivo'
+    | 'domingoFestivoNocturno'
+    | 'extraDominicalFestivo'
+    | 'extraNocturnaDominicalFestivo'
+
+export interface PeriodosHoras {
+    totalMinutos: number
+    minutosNormales: number
+    minutosNocturnas: number
+    minutosDomingos: number
+    minutosFestivos: number
+    minutosDomingosFestivosNocturnos: number
+    minutosExtrasOrdinarias: number
+    minutosExtrasNocturnas: number
+    minutosExtrasDominicalFestivo: number
+    minutosExtrasNocturnaDominicalFestivo: number
+}
+
+// ==================================================
+// UTILIDADES DE PRECISIÓN
 // ==================================================
 export function minutosAHoras(minutos: number): number {
     if (!minutos || minutos === 0) return 0
@@ -27,90 +54,97 @@ export function minutosAHoras(minutos: number): number {
 
 export function calcularValorPorMinutos(minutos: number, tarifaPorHora: number): number {
     if (!minutos || minutos === 0 || !tarifaPorHora) return 0
-    const horas = minutos / 60
-    const valorBruto = horas * tarifaPorHora
-    return Math.round(valorBruto * 100) / 100
+    return Math.round((minutos / 60) * tarifaPorHora * 100) / 100
 }
 
 export function horasAFormato(horas: number): string {
     if (!horas || horas === 0) return "0:00"
     const horasEnteras = Math.floor(horas)
-    const minutosDecimales = horas - horasEnteras
-    const minutos = Math.round(minutosDecimales * 60)
+    const minutos = Math.round((horas - horasEnteras) * 60)
     return `${horasEnteras}:${minutos.toString().padStart(2, '0')}`
 }
 
-export function calcularPorcentajeHora(minutos: number): number {
-    if (!minutos || minutos === 0) return 0
-    return Math.round((minutos / 60) * 100 * 100) / 100
-}
-
-async function obtenerDiasFestivos(año: number): Promise<Date[]> {
-    if (cacheDiasFestivos[año] && cacheDiasFestivos[año].timestamp) {
-        const tiempoTranscurrido = Date.now() - cacheDiasFestivos[año].timestamp
-        if (tiempoTranscurrido < CACHE_FESTIVOS_DURACION) {
-            return cacheDiasFestivos[año].fechas
-        }
-    }
-
-    try {
-        const response = await fetch(`https://api-colombia.com/api/v1/Holiday/year/${año}`)
-        if (!response.ok) throw new Error(`Error en API festivos: ${response.status}`)
-        const data = await response.json()
-
-        const fechasFestivas = data.map((festivo: any) => {
-            const fecha = new Date(festivo.date)
-            return new Date(Date.UTC(fecha.getFullYear(), fecha.getMonth(), fecha.getDate()))
-        })
-
-        cacheDiasFestivos[año] = { fechas: fechasFestivas, timestamp: Date.now() }
-        return fechasFestivas
-    } catch (error) {
-        console.error(`Error al obtener días festivos para ${año}:`, error)
-        return []
-    }
-}
-
 // ==================================================
-// MANEJO DE ZONAS HORARIAS (UTC a COLOMBIA UTC-5)
+// ZONA HORARIA — Colombia UTC-5 fijo (sin DST)
 // ==================================================
-
 /**
- * Convierte cualquier fecha a un Date "falso" donde sus métodos getUTC*
- * devuelven exactamente la hora local de Colombia.
- * La BD guarda en UTC (Z), Vercel corre en UTC. Al restar 5 horas,
- * garantizamos que getUTCHours() retorna la hora en Bogotá.
+ * Convierte una fecha UTC a un Date "falso" donde los métodos getUTC*
+ * devuelven la hora local de Bogotá. Útil para clasificar minutos por franja.
  */
-function toColombiaTime(fechaUTC: Date | string): Date {
+export function toColombiaTime(fechaUTC: Date | string): Date {
     const d = new Date(fechaUTC)
-    const offsetBogota = -5 * 60 * 60 * 1000
-    return new Date(d.getTime() + offsetBogota)
+    return new Date(d.getTime() + (-5 * 60 * 60 * 1000))
 }
 
-function esHorarioNocturno(fechaBogota: Date): boolean {
-    const hora = fechaBogota.getUTCHours() // Usar siempre getUTC* en la fecha "falsa"
+export function esHorarioNocturno(fechaBogota: Date): boolean {
+    const hora = fechaBogota.getUTCHours()
     return hora >= 19 || hora < 6
 }
 
-function esDomingoOFestivo(fechaBogota: Date, diasFestivos: Date[]): { isDomingo: boolean, isFestivo: boolean } {
+export function esDomingoOFestivo(
+    fechaBogota: Date,
+    diasFestivos: Date[],
+): { isDomingo: boolean; isFestivo: boolean } {
     const isDomingo = fechaBogota.getUTCDay() === 0
-    // Normalizamos la fecha consultada al inicio del día UTC
-    const fechaNormalizada = new Date(Date.UTC(fechaBogota.getUTCFullYear(), fechaBogota.getUTCMonth(), fechaBogota.getUTCDate()))
-    const isFestivo = diasFestivos.some(festivo => festivo.getTime() === fechaNormalizada.getTime())
+    const fechaNormalizada = new Date(
+        Date.UTC(fechaBogota.getUTCFullYear(), fechaBogota.getUTCMonth(), fechaBogota.getUTCDate()),
+    )
+    const isFestivo = diasFestivos.some((festivo) => festivo.getTime() === fechaNormalizada.getTime())
     return { isDomingo, isFestivo }
 }
 
-async function obtenerTarifas(): Promise<Record<string, number>> {
+// ==================================================
+// FESTIVOS (API Colombia + fallback caché)
+// ==================================================
+export async function obtenerDiasFestivos(año: number): Promise<Date[]> {
+    const cached = cacheDiasFestivos[año]
+    if (cached && Date.now() - cached.timestamp < CACHE_FESTIVOS_DURACION) {
+        return cached.fechas
+    }
+
+    try {
+        const res = await fetch(`https://api-colombia.com/api/v1/Holiday/year/${año}`)
+        if (!res.ok) throw new Error(`API festivos: ${res.status}`)
+        const data = await res.json()
+        const fechas = data.map((f: { date: string }) => {
+            const d = new Date(f.date)
+            return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+        })
+        cacheDiasFestivos[año] = { fechas, timestamp: Date.now() }
+        return fechas
+    } catch (error) {
+        console.error(`Error al obtener festivos para ${año}:`, error)
+        return cacheDiasFestivos[año]?.fechas ?? []
+    }
+}
+
+/**
+ * Retorna los festivos que cubren el rango [entrada, salida]. Si el rango
+ * cruza de año, concatena los festivos de ambos.
+ */
+export async function obtenerFestivosParaRango(entrada: Date, salida: Date): Promise<Date[]> {
+    const añoInicio = entrada.getUTCFullYear()
+    const añoFin = salida.getUTCFullYear()
+    const festivos = await obtenerDiasFestivos(añoInicio)
+    if (añoFin !== añoInicio) {
+        const festivosFin = await obtenerDiasFestivos(añoFin)
+        return [...festivos, ...festivosFin]
+    }
+    return festivos
+}
+
+// ==================================================
+// TARIFAS (tabla `tarifas` + caché + fallback hardcodeado 2026)
+// ==================================================
+export async function obtenerTarifas(): Promise<Record<string, number>> {
     if (cacheTarifas && cacheTarifasTimestamp) {
-        const tiempoTranscurrido = Date.now() - cacheTarifasTimestamp
-        if (tiempoTranscurrido < CACHE_TARIFAS_DURACION) {
-            return cacheTarifas
-        }
+        const elapsed = Date.now() - cacheTarifasTimestamp
+        if (elapsed < CACHE_TARIFAS_DURACION) return cacheTarifas
     }
 
     try {
         const supabase = await createClient()
-        const { data: rows, error } = await supabase
+        const { data, error } = await supabase
             .from('tarifas')
             .select('tipo_hora, precio_por_hora')
             .eq('activo', true)
@@ -118,7 +152,7 @@ async function obtenerTarifas(): Promise<Record<string, number>> {
         if (error) throw error
 
         const tarifas: Record<string, number> = {}
-        rows.forEach(row => {
+        data.forEach((row) => {
             tarifas[row.tipo_hora] = parseFloat(row.precio_por_hora)
         })
 
@@ -126,7 +160,7 @@ async function obtenerTarifas(): Promise<Record<string, number>> {
         cacheTarifasTimestamp = Date.now()
         return tarifas
     } catch (error) {
-        console.error('Error al obtener tarifas:', error)
+        console.error('Error al obtener tarifas, usando fallback:', error)
         return {
             normal: 7959,
             nocturno: 10745,
@@ -136,657 +170,120 @@ async function obtenerTarifas(): Promise<Record<string, number>> {
             festivo: 14326,
             domingoFestivoNocturno: 17111,
             extraDominicalFestivo: 17111,
-            extraNocturnaDominicalFestivo: 21091
+            extraNocturnaDominicalFestivo: 21091,
         }
     }
 }
 
 // ==================================================
-// SOPORTE DE PAUSAS: divide un turno en sub-intervalos
+// MOTOR POR TRAMOS (chunk-based)
 // ==================================================
-function buildWorkIntervals(
-    entrada: Date,
-    salida: Date,
-    pausas: Array<{ inicio: any; fin: any }>
-): Array<{ start: Date; end: Date }> {
-    if (!pausas || pausas.length === 0) {
-        return [{ start: entrada, end: salida }]
-    }
-
-    const sorted = pausas
-        .map(p => ({
-            start: toColombiaTime(p.inicio.fecha_hora),
-            end: toColombiaTime(p.fin.fecha_hora)
-        }))
-        .sort((a, b) => a.start.getTime() - b.start.getTime())
-
-    const intervals: Array<{ start: Date; end: Date }> = []
-    let currentStart = entrada
-
-    for (const pausa of sorted) {
-        if (pausa.start.getTime() > currentStart.getTime()) {
-            intervals.push({ start: currentStart, end: pausa.start })
-        }
-        currentStart = pausa.end
-    }
-
-    if (currentStart.getTime() < salida.getTime()) {
-        intervals.push({ start: currentStart, end: salida })
-    }
-
-    return intervals
-}
-
-function calcularPeriodosHoras(entradaBogota: Date, salidaBogota: Date, diasFestivos: Date[], minutosAcumuladosOffset: number = 0) {
-    const resultado = {
+/**
+ * Calcula los 9 tipos de minutos entre `entradaBogota` y `salidaBogota`.
+ *
+ * Input: fechas ya convertidas a Bogotá (hora falsa donde getUTC* retorna hora local).
+ * El motor avanza por chunks hasta el próximo "punto de corte" (19:00, 06:00, medianoche
+ * o el umbral de 480 min). Cada chunk se clasifica por franja nocturna, día domingo/festivo
+ * y si ya superó las 8h acumuladas.
+ *
+ * Casos especiales preservados:
+ * - Cruce de medianoche → el chunk se corta en 00:00 y se recalcula tipo.
+ * - Domingo 22:00 → Lunes festivo: todo sigue siendo `domingoFestivoNocturno`.
+ * - Turno que cruza domingo→lunes ordinario: los minutos del lunes pasan a normal/nocturno.
+ * - Festivo en medio de semana: cada tramo se evalúa contra la lista de festivos.
+ */
+export function calcularPeriodosHorasOptimizado(
+    entradaBogota: Date,
+    salidaBogota: Date,
+    diasFestivos: Date[],
+    minutosAcumuladosOffset = 0,
+): PeriodosHoras {
+    const resultado: PeriodosHoras = {
         totalMinutos: 0,
         minutosNormales: 0,
-        minutosExtrasOrdinarias: 0,
-        minutosExtrasNocturnas: 0,
         minutosNocturnas: 0,
         minutosDomingos: 0,
         minutosFestivos: 0,
         minutosDomingosFestivosNocturnos: 0,
+        minutosExtrasOrdinarias: 0,
+        minutosExtrasNocturnas: 0,
         minutosExtrasDominicalFestivo: 0,
         minutosExtrasNocturnaDominicalFestivo: 0,
-        periodos: [] as any[]
     }
 
     const diffMs = salidaBogota.getTime() - entradaBogota.getTime()
     const totalMinutos = Math.floor(diffMs / (1000 * 60))
     resultado.totalMinutos = totalMinutos
-
     if (totalMinutos <= 0) return resultado
 
     let minutosAcumulados = minutosAcumuladosOffset
-    let periodoActual: any = null
+    let momentoActualMs = entradaBogota.getTime()
 
-    for (let i = 0; i < totalMinutos; i++) {
-        const momentoActual = new Date(entradaBogota.getTime() + i * 60 * 1000)
-        const esNocturno = esHorarioNocturno(momentoActual)
+    while (momentoActualMs < salidaBogota.getTime()) {
+        const momentoActual = new Date(momentoActualMs)
+        const horaUTC = momentoActual.getUTCHours()
 
-        const inicioDia = new Date(momentoActual)
-        inicioDia.setUTCHours(0, 0, 0, 0)
-        const { isDomingo: esDiaDomingo, isFestivo: esDiaFestivo } = esDomingoOFestivo(inicioDia, diasFestivos)
-
-        const esExtra = minutosAcumulados >= (8 * 60)
-        let tipoMinuto
-
-        if (esDiaDomingo || esDiaFestivo) {
-            if (esExtra) {
-                tipoMinuto = esNocturno ? 'extraNocturnaDominicalFestivo' : 'extraDominicalFestivo'
-            } else {
-                if (esNocturno) {
-                    tipoMinuto = 'domingoFestivoNocturno'
-                } else {
-                    tipoMinuto = esDiaDomingo ? 'domingo' : 'festivo'
-                }
-            }
-        } else if (esExtra) {
-            tipoMinuto = esNocturno ? 'extraNocturno' : 'extra'
-        } else {
-            tipoMinuto = esNocturno ? 'nocturno' : 'normal'
-        }
-
-        switch (tipoMinuto) {
-            case 'normal': resultado.minutosNormales++; break;
-            case 'extra': resultado.minutosExtrasOrdinarias++; break;
-            case 'extraNocturno': resultado.minutosExtrasNocturnas++; break;
-            case 'nocturno': resultado.minutosNocturnas++; break;
-            case 'domingo': resultado.minutosDomingos++; break;
-            case 'festivo': resultado.minutosFestivos++; break;
-            case 'domingoFestivoNocturno': resultado.minutosDomingosFestivosNocturnos++; break;
-            case 'extraDominicalFestivo': resultado.minutosExtrasDominicalFestivo++; break;
-            case 'extraNocturnaDominicalFestivo': resultado.minutosExtrasNocturnaDominicalFestivo++; break;
-        }
-
-        if (!periodoActual || periodoActual.tipo !== tipoMinuto) {
-            if (periodoActual) resultado.periodos.push(periodoActual)
-            periodoActual = {
-                tipo: tipoMinuto,
-                inicio: new Date(momentoActual),
-                fin: new Date(momentoActual.getTime() + 60 * 1000),
-                minutos: 1
-            }
-        } else {
-            periodoActual.fin = new Date(momentoActual.getTime() + 60 * 1000)
-            periodoActual.minutos++
-        }
-        minutosAcumulados++
-    }
-
-    if (periodoActual) resultado.periodos.push(periodoActual)
-    return resultado
-}
-
-export async function calcularHorasUsuarioPorPeriodo(cedula: string, fechaInicio: Date, fechaFin: Date) {
-    try {
-        const supabase = await createClient()
-        const { data: registros, error } = await supabase
-            .from('registros')
-            .select('id, usuario_nombre, operacion, tipo, fecha_hora')
-            .eq('id', cedula)
-            .gte('fecha_hora', fechaInicio.toISOString())
-            .lte('fecha_hora', fechaFin.toISOString())
-            .order('fecha_hora', { ascending: true })
-
-        if (error) throw error
-        if (!registros || registros.length === 0) return null
-
-        const usuario = {
-            cedula,
-            nombre: registros[0].usuario_nombre,
-            operacion: registros[0].operacion
-        }
-
-        const añoInicio = fechaInicio.getFullYear()
-        const añoFin = fechaFin.getFullYear()
-        let diasFestivos = await obtenerDiasFestivos(añoInicio)
-        if (añoFin !== añoInicio) {
-            const festivosAñoFin = await obtenerDiasFestivos(añoFin)
-            diasFestivos = [...diasFestivos, ...festivosAñoFin]
-        }
-
-        const registrosUnicos: any[] = []
-        const vistos = new Set()
-        for (const registro of registros) {
-            const key = `${registro.tipo}-${new Date(registro.fecha_hora).getTime()}`
-            if (!vistos.has(key)) {
-                vistos.add(key)
-                registrosUnicos.push(registro)
-            }
-        }
-
-        const pares: Array<{ entrada: any; salida: any; pausas: Array<{ inicio: any; fin: any }> }> = []
-        const entradasAbiertas: any[] = []
-        let currentPausaInicio: any = null
-        let pausasActivas: Array<{ inicio: any; fin: any }> = []
-
-        for (const registro of registrosUnicos) {
-            if (registro.tipo === 'ENTRADA') {
-                entradasAbiertas.push(registro)
-                pausasActivas = []
-                currentPausaInicio = null
-            } else if (registro.tipo === 'PAUSA_INICIO') {
-                currentPausaInicio = registro
-            } else if (registro.tipo === 'PAUSA_FIN') {
-                if (currentPausaInicio) {
-                    pausasActivas.push({ inicio: currentPausaInicio, fin: registro })
-                    currentPausaInicio = null
-                }
-            } else if (registro.tipo === 'SALIDA') {
-                if (entradasAbiertas.length > 0) {
-                    const entrada = entradasAbiertas.shift()
-                    pares.push({ entrada, salida: registro, pausas: [...pausasActivas] })
-                    pausasActivas = []
-                    currentPausaInicio = null
-                }
-            }
-        }
-
-        let totalMinutos = 0, minutosNormales = 0, minutosExtrasOrdinarias = 0, minutosExtrasNocturnas = 0
-        let minutosNocturnas = 0, minutosDomingos = 0, minutosFestivos = 0, minutosDomingosFestivosNocturnos = 0
-        let minutosExtrasDominicalFestivo = 0, minutosExtrasNocturnaDominicalFestivo = 0
-
-        const registrosCalculados = []
-        for (const par of pares) {
-            const entrada = toColombiaTime(par.entrada.fecha_hora)
-            const salida = toColombiaTime(par.salida.fecha_hora)
-            const intervals = buildWorkIntervals(entrada, salida, par.pausas)
-
-            let minutosAcumuladosShift = 0
-            const periodoAcumulado = {
-                totalMinutos: 0,
-                minutosNormales: 0, minutosExtrasOrdinarias: 0, minutosExtrasNocturnas: 0,
-                minutosNocturnas: 0, minutosDomingos: 0, minutosFestivos: 0,
-                minutosDomingosFestivosNocturnos: 0, minutosExtrasDominicalFestivo: 0,
-                minutosExtrasNocturnaDominicalFestivo: 0, periodos: [] as any[]
-            }
-
-            for (const interval of intervals) {
-                const periodos = calcularPeriodosHoras(interval.start, interval.end, diasFestivos, minutosAcumuladosShift)
-                minutosAcumuladosShift += periodos.totalMinutos
-
-                periodoAcumulado.totalMinutos += periodos.totalMinutos
-                periodoAcumulado.minutosNormales += periodos.minutosNormales
-                periodoAcumulado.minutosExtrasOrdinarias += periodos.minutosExtrasOrdinarias
-                periodoAcumulado.minutosExtrasNocturnas += periodos.minutosExtrasNocturnas
-                periodoAcumulado.minutosNocturnas += periodos.minutosNocturnas
-                periodoAcumulado.minutosDomingos += periodos.minutosDomingos
-                periodoAcumulado.minutosFestivos += periodos.minutosFestivos
-                periodoAcumulado.minutosDomingosFestivosNocturnos += periodos.minutosDomingosFestivosNocturnos
-                periodoAcumulado.minutosExtrasDominicalFestivo += periodos.minutosExtrasDominicalFestivo
-                periodoAcumulado.minutosExtrasNocturnaDominicalFestivo += periodos.minutosExtrasNocturnaDominicalFestivo
-                periodoAcumulado.periodos.push(...periodos.periodos)
-            }
-
-            totalMinutos += periodoAcumulado.totalMinutos
-            minutosNormales += periodoAcumulado.minutosNormales
-            minutosExtrasOrdinarias += periodoAcumulado.minutosExtrasOrdinarias
-            minutosExtrasNocturnas += periodoAcumulado.minutosExtrasNocturnas
-            minutosNocturnas += periodoAcumulado.minutosNocturnas
-            minutosDomingos += periodoAcumulado.minutosDomingos
-            minutosFestivos += periodoAcumulado.minutosFestivos
-            minutosDomingosFestivosNocturnos += periodoAcumulado.minutosDomingosFestivosNocturnos
-            minutosExtrasDominicalFestivo += periodoAcumulado.minutosExtrasDominicalFestivo
-            minutosExtrasNocturnaDominicalFestivo += periodoAcumulado.minutosExtrasNocturnaDominicalFestivo
-
-            registrosCalculados.push({
-                entrada: entrada.toISOString(),
-                salida: salida.toISOString(),
-                horasCalculadas: periodoAcumulado
-            })
-        }
-
-        const tarifas = await obtenerTarifas()
-        const valorNormales = calcularValorPorMinutos(minutosNormales, tarifas.normal)
-        const valorExtrasOrdinarias = calcularValorPorMinutos(minutosExtrasOrdinarias, tarifas.extra)
-        const valorExtrasNocturnas = calcularValorPorMinutos(minutosExtrasNocturnas, tarifas.extraNocturno)
-        const valorNocturnas = calcularValorPorMinutos(minutosNocturnas, tarifas.nocturno)
-        const valorDomingos = calcularValorPorMinutos(minutosDomingos, tarifas.domingo)
-        const valorFestivos = calcularValorPorMinutos(minutosFestivos, tarifas.festivo)
-        const valorDomingosFestivosNocturnos = calcularValorPorMinutos(minutosDomingosFestivosNocturnos, tarifas.domingoFestivoNocturno)
-        const valorExtrasDominicalFestivo = calcularValorPorMinutos(minutosExtrasDominicalFestivo, tarifas.extraDominicalFestivo)
-        const valorExtrasNocturnaDominicalFestivo = calcularValorPorMinutos(minutosExtrasNocturnaDominicalFestivo, tarifas.extraNocturnaDominicalFestivo)
-
-        const valorTotal = Math.round((
-            valorNormales + valorExtrasOrdinarias + valorExtrasNocturnas +
-            valorNocturnas + valorDomingos + valorFestivos + valorDomingosFestivosNocturnos +
-            valorExtrasDominicalFestivo + valorExtrasNocturnaDominicalFestivo
-        ) * 100) / 100
-
-        return {
-            ...usuario,
-            periodo: { inicio: fechaInicio.toISOString(), fin: fechaFin.toISOString() },
-            totalMinutos,
-            horasTotales: minutosAHoras(totalMinutos),
-            horasTotalesFormato: horasAFormato(minutosAHoras(totalMinutos)),
-            detalleMinutos: {
-                normales: minutosNormales,
-                extrasOrdinarias: minutosExtrasOrdinarias,
-                extrasNocturnas: minutosExtrasNocturnas,
-                nocturnas: minutosNocturnas,
-                domingos: minutosDomingos,
-                festivos: minutosFestivos,
-                domingosFestivosNocturnos: minutosDomingosFestivosNocturnos,
-                extrasDominicalFestivo: minutosExtrasDominicalFestivo,
-                extrasNocturnaDominicalFestivo: minutosExtrasNocturnaDominicalFestivo
-            },
-            horasFormato: {
-                normales: horasAFormato(minutosAHoras(minutosNormales)),
-                extrasOrdinarias: horasAFormato(minutosAHoras(minutosExtrasOrdinarias)),
-                extrasNocturnas: horasAFormato(minutosAHoras(minutosExtrasNocturnas)),
-                nocturnas: horasAFormato(minutosAHoras(minutosNocturnas)),
-                domingos: horasAFormato(minutosAHoras(minutosDomingos)),
-                festivos: horasAFormato(minutosAHoras(minutosFestivos)),
-                domingosFestivosNocturnos: horasAFormato(minutosAHoras(minutosDomingosFestivosNocturnos)),
-                extrasDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasDominicalFestivo)),
-                extrasNocturnaDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasNocturnaDominicalFestivo))
-            },
-            valorTotal,
-            detalleValores: {
-                normal: valorNormales,
-                extrasOrdinarias: valorExtrasOrdinarias,
-                extrasNocturnas: valorExtrasNocturnas,
-                nocturnas: valorNocturnas,
-                domingos: valorDomingos,
-                festivos: valorFestivos,
-                domingosFestivosNocturnos: valorDomingosFestivosNocturnos,
-                extrasDominicalFestivo: valorExtrasDominicalFestivo,
-                extrasNocturnaDominicalFestivo: valorExtrasNocturnaDominicalFestivo
-            },
-            registros: registrosCalculados
-        }
-    } catch (error) {
-        console.error(`Error al calcular horas para usuario ${cedula}:`, error)
-        throw error
-    }
-}
-
-export async function calcularHorasTodosUsuariosPorPeriodo(fechaInicio: Date, fechaFin: Date, operaciones: string[] = []) {
-    try {
-        const supabase = await createClient()
-
-        let query = supabase
-            .from('registros')
-            .select('id, usuario_nombre, operacion')
-            .gte('fecha_hora', fechaInicio.toISOString())
-            .lte('fecha_hora', fechaFin.toISOString())
-
-        if (operaciones.length > 0) {
-            query = query.in('operacion', operaciones)
-        }
-
-        const { data: records, error } = await query
-
-        if (error) throw error
-
-        // Identify unique users mapping their latest names and operations
-        const uniqueUsersMap: Record<string, { id: string; usuario_nombre: string; operacion: string }> = {}
-
-        records?.forEach((rec) => {
-            uniqueUsersMap[rec.id] = {
-                id: rec.id,
-                usuario_nombre: rec.usuario_nombre,
-                operacion: rec.operacion
-            }
-        })
-
-        const usuarios = Object.values(uniqueUsersMap)
-
-        // Process in parallel
-        const promesas = usuarios.map(u => calcularHorasUsuarioPorPeriodo(u.id, fechaInicio, fechaFin))
-        const resultados = await Promise.all(promesas)
-
-        // Filter nulls (those missing valid entries/outputs)
-        return resultados.filter(d => d !== null)
-
-    } catch (error) {
-        console.error('Error al calcular horas globales:', error)
-        throw error
-    }
-}
-
-// ==================================================
-// MOTOR DE CÁLCULO OPTIMIZADO (TRAMOS Y BATCH QUERY)
-// ==================================================
-
-export function calcularPeriodosHorasOptimizado(entradaBogota: Date, salidaBogota: Date, diasFestivos: Date[], minutosAcumuladosOffset: number = 0) {
-    const resultado = {
-        totalMinutos: 0,
-        minutosNormales: 0,
-        minutosExtrasOrdinarias: 0,
-        minutosExtrasNocturnas: 0,
-        minutosNocturnas: 0,
-        minutosDomingos: 0,
-        minutosFestivos: 0,
-        minutosDomingosFestivosNocturnos: 0,
-        minutosExtrasDominicalFestivo: 0,
-        minutosExtrasNocturnaDominicalFestivo: 0,
-        periodos: [] as any[]
-    };
-
-    const diffMs = salidaBogota.getTime() - entradaBogota.getTime();
-    const totalMinutos = Math.floor(diffMs / (1000 * 60));
-    resultado.totalMinutos = totalMinutos;
-
-    if (totalMinutos <= 0) return resultado;
-
-    let minutosAcumulados = minutosAcumuladosOffset;
-    let momentoActualMs = entradaBogota.getTime();
-
-    while (minutosAcumulados < totalMinutos) {
-        const momentoActual = new Date(momentoActualMs);
-        const horaUTC = momentoActual.getUTCHours();
-        
-        let minutosHastaCambioHorario = 0;
+        let minutosHastaCambioHorario = 0
         if (horaUTC >= 6 && horaUTC < 19) {
-            const next19 = new Date(momentoActual);
-            next19.setUTCHours(19, 0, 0, 0);
-            minutosHastaCambioHorario = Math.floor((next19.getTime() - momentoActual.getTime()) / 60000);
+            const next19 = new Date(momentoActual)
+            next19.setUTCHours(19, 0, 0, 0)
+            minutosHastaCambioHorario = Math.floor((next19.getTime() - momentoActual.getTime()) / 60000)
         } else if (horaUTC >= 19) {
-            const nextMidnight = new Date(momentoActual);
-            nextMidnight.setUTCHours(24, 0, 0, 0); 
-            minutosHastaCambioHorario = Math.floor((nextMidnight.getTime() - momentoActual.getTime()) / 60000);
+            const nextMidnight = new Date(momentoActual)
+            nextMidnight.setUTCHours(24, 0, 0, 0)
+            minutosHastaCambioHorario = Math.floor((nextMidnight.getTime() - momentoActual.getTime()) / 60000)
         } else {
-            const next6 = new Date(momentoActual);
-            next6.setUTCHours(6, 0, 0, 0);
-            minutosHastaCambioHorario = Math.floor((next6.getTime() - momentoActual.getTime()) / 60000);
+            const next6 = new Date(momentoActual)
+            next6.setUTCHours(6, 0, 0, 0)
+            minutosHastaCambioHorario = Math.floor((next6.getTime() - momentoActual.getTime()) / 60000)
         }
-        
-        const minutosHastaExtra = minutosAcumulados < 480 ? (480 - minutosAcumulados) : Infinity;
-        
+
+        const minutosHastaExtra = minutosAcumulados < 480 ? 480 - minutosAcumulados : Infinity
+        const minutosRestantes = Math.floor((salidaBogota.getTime() - momentoActualMs) / 60000)
+
         let chunkMinutos = Math.min(
             minutosHastaCambioHorario > 0 ? minutosHastaCambioHorario : 1,
             minutosHastaExtra,
-            totalMinutos - minutosAcumulados
-        );
-        
-        if (chunkMinutos <= 0) chunkMinutos = 1;
+            minutosRestantes,
+        )
+        if (chunkMinutos <= 0) chunkMinutos = 1
 
-        const esNocturno = esHorarioNocturno(momentoActual);
-        const inicioDia = new Date(momentoActual);
-        inicioDia.setUTCHours(0, 0, 0, 0);
-        const { isDomingo: esDiaDomingo, isFestivo: esDiaFestivo } = esDomingoOFestivo(inicioDia, diasFestivos);
-        const esExtra = minutosAcumulados >= 480;
-        
-        let tipoMinuto;
-        if (esDiaDomingo || esDiaFestivo) {
+        const esNocturno = esHorarioNocturno(momentoActual)
+        const inicioDia = new Date(momentoActual)
+        inicioDia.setUTCHours(0, 0, 0, 0)
+        const { isDomingo, isFestivo } = esDomingoOFestivo(inicioDia, diasFestivos)
+        const esExtra = minutosAcumulados >= 480
+
+        let tipo: TipoMinuto
+        if (isDomingo || isFestivo) {
             if (esExtra) {
-                tipoMinuto = esNocturno ? 'extraNocturnaDominicalFestivo' : 'extraDominicalFestivo';
+                tipo = esNocturno ? 'extraNocturnaDominicalFestivo' : 'extraDominicalFestivo'
+            } else if (esNocturno) {
+                tipo = 'domingoFestivoNocturno'
             } else {
-                if (esNocturno) {
-                    tipoMinuto = 'domingoFestivoNocturno';
-                } else {
-                    tipoMinuto = esDiaDomingo ? 'domingo' : 'festivo';
-                }
+                tipo = isDomingo ? 'domingo' : 'festivo'
             }
         } else if (esExtra) {
-            tipoMinuto = esNocturno ? 'extraNocturno' : 'extra';
+            tipo = esNocturno ? 'extraNocturno' : 'extra'
         } else {
-            tipoMinuto = esNocturno ? 'nocturno' : 'normal';
+            tipo = esNocturno ? 'nocturno' : 'normal'
         }
 
-        switch (tipoMinuto) {
-            case 'normal': resultado.minutosNormales += chunkMinutos; break;
-            case 'extra': resultado.minutosExtrasOrdinarias += chunkMinutos; break;
-            case 'extraNocturno': resultado.minutosExtrasNocturnas += chunkMinutos; break;
-            case 'nocturno': resultado.minutosNocturnas += chunkMinutos; break;
-            case 'domingo': resultado.minutosDomingos += chunkMinutos; break;
-            case 'festivo': resultado.minutosFestivos += chunkMinutos; break;
-            case 'domingoFestivoNocturno': resultado.minutosDomingosFestivosNocturnos += chunkMinutos; break;
-            case 'extraDominicalFestivo': resultado.minutosExtrasDominicalFestivo += chunkMinutos; break;
-            case 'extraNocturnaDominicalFestivo': resultado.minutosExtrasNocturnaDominicalFestivo += chunkMinutos; break;
+        switch (tipo) {
+            case 'normal':                         resultado.minutosNormales += chunkMinutos; break
+            case 'nocturno':                       resultado.minutosNocturnas += chunkMinutos; break
+            case 'extra':                          resultado.minutosExtrasOrdinarias += chunkMinutos; break
+            case 'extraNocturno':                  resultado.minutosExtrasNocturnas += chunkMinutos; break
+            case 'domingo':                        resultado.minutosDomingos += chunkMinutos; break
+            case 'festivo':                        resultado.minutosFestivos += chunkMinutos; break
+            case 'domingoFestivoNocturno':         resultado.minutosDomingosFestivosNocturnos += chunkMinutos; break
+            case 'extraDominicalFestivo':          resultado.minutosExtrasDominicalFestivo += chunkMinutos; break
+            case 'extraNocturnaDominicalFestivo':  resultado.minutosExtrasNocturnaDominicalFestivo += chunkMinutos; break
         }
 
-        minutosAcumulados += chunkMinutos;
-        momentoActualMs += chunkMinutos * 60000;
+        minutosAcumulados += chunkMinutos
+        momentoActualMs += chunkMinutos * 60000
     }
 
-    return resultado;
-}
-
-export async function calcularHorasTodosUsuariosPorPeriodoOptimizado(fechaInicio: Date, fechaFin: Date, operacionesGasto: string[] = []) {
-    try {
-        const supabase = await createClient();
-
-        let query = supabase
-            .from('registros')
-            .select('id, usuario_nombre, operacion, tipo, fecha_hora')
-            .gte('fecha_hora', fechaInicio.toISOString())
-            .lte('fecha_hora', fechaFin.toISOString())
-            .order('fecha_hora', { ascending: true });
-
-        if (operacionesGasto.length > 0) {
-            query = query.in('operacion', operacionesGasto);
-        }
-
-        const { data: registrosTotales, error } = await query;
-        if (error) throw error;
-        if (!registrosTotales || registrosTotales.length === 0) return [];
-
-        const añoInicio = fechaInicio.getFullYear();
-        const añoFin = fechaFin.getFullYear();
-        let diasFestivos = await obtenerDiasFestivos(añoInicio);
-        if (añoFin !== añoInicio) {
-            const festivosAñoFin = await obtenerDiasFestivos(añoFin);
-            diasFestivos = [...diasFestivos, ...festivosAñoFin];
-        }
-        const tarifas = await obtenerTarifas();
-
-        const registrosPorUsuario: Record<string, any[]> = {};
-        for (const reg of registrosTotales) {
-            if (!registrosPorUsuario[reg.id]) {
-                registrosPorUsuario[reg.id] = [];
-            }
-            registrosPorUsuario[reg.id].push(reg);
-        }
-
-        const resultadosFinales = [];
-
-        for (const [cedula, registros] of Object.entries(registrosPorUsuario)) {
-            const registrosUnicos: any[] = [];
-            const vistos = new Set();
-            for (const registro of registros) {
-                const key = `${registro.tipo}-${new Date(registro.fecha_hora).getTime()}`;
-                if (!vistos.has(key)) {
-                    vistos.add(key);
-                    registrosUnicos.push(registro);
-                }
-            }
-
-            const pares: Array<{ entrada: any; salida: any; pausas: Array<{ inicio: any; fin: any }> }> = [];
-            const entradasAbiertas: any[] = [];
-            let currentPausaInicio: any = null;
-            let pausasActivas: Array<{ inicio: any; fin: any }> = [];
-
-            for (const registro of registrosUnicos) {
-                if (registro.tipo === 'ENTRADA') {
-                    entradasAbiertas.push(registro);
-                    pausasActivas = [];
-                    currentPausaInicio = null;
-                } else if (registro.tipo === 'PAUSA_INICIO') {
-                    currentPausaInicio = registro;
-                } else if (registro.tipo === 'PAUSA_FIN') {
-                    if (currentPausaInicio) {
-                        pausasActivas.push({ inicio: currentPausaInicio, fin: registro });
-                        currentPausaInicio = null;
-                    }
-                } else if (registro.tipo === 'SALIDA') {
-                    if (entradasAbiertas.length > 0) {
-                        const entrada = entradasAbiertas.shift();
-                        pares.push({ entrada, salida: registro, pausas: [...pausasActivas] });
-                        pausasActivas = [];
-                        currentPausaInicio = null;
-                    }
-                }
-            }
-
-            if (pares.length === 0) continue;
-
-            const usuarioData = {
-                cedula,
-                nombre: registrosUnicos[registrosUnicos.length - 1].usuario_nombre,
-                operacion: registrosUnicos[registrosUnicos.length - 1].operacion
-            };
-
-            let totalMinutos = 0, minutosNormales = 0, minutosExtrasOrdinarias = 0, minutosExtrasNocturnas = 0;
-            let minutosNocturnas = 0, minutosDomingos = 0, minutosFestivos = 0, minutosDomingosFestivosNocturnos = 0;
-            let minutosExtrasDominicalFestivo = 0, minutosExtrasNocturnaDominicalFestivo = 0;
-
-            const registrosCalculados = [];
-            for (const par of pares) {
-                const entrada = toColombiaTime(par.entrada.fecha_hora);
-                const salida = toColombiaTime(par.salida.fecha_hora);
-                const intervals = buildWorkIntervals(entrada, salida, par.pausas);
-
-                let minutosAcumuladosShift = 0;
-                const periodoAcumulado = {
-                    totalMinutos: 0,
-                    minutosNormales: 0, minutosExtrasOrdinarias: 0, minutosExtrasNocturnas: 0,
-                    minutosNocturnas: 0, minutosDomingos: 0, minutosFestivos: 0,
-                    minutosDomingosFestivosNocturnos: 0, minutosExtrasDominicalFestivo: 0,
-                    minutosExtrasNocturnaDominicalFestivo: 0, periodos: [] as any[]
-                };
-
-                for (const interval of intervals) {
-                    const periodos = calcularPeriodosHorasOptimizado(interval.start, interval.end, diasFestivos, minutosAcumuladosShift);
-                    minutosAcumuladosShift += periodos.totalMinutos;
-
-                    periodoAcumulado.totalMinutos += periodos.totalMinutos;
-                    periodoAcumulado.minutosNormales += periodos.minutosNormales;
-                    periodoAcumulado.minutosExtrasOrdinarias += periodos.minutosExtrasOrdinarias;
-                    periodoAcumulado.minutosExtrasNocturnas += periodos.minutosExtrasNocturnas;
-                    periodoAcumulado.minutosNocturnas += periodos.minutosNocturnas;
-                    periodoAcumulado.minutosDomingos += periodos.minutosDomingos;
-                    periodoAcumulado.minutosFestivos += periodos.minutosFestivos;
-                    periodoAcumulado.minutosDomingosFestivosNocturnos += periodos.minutosDomingosFestivosNocturnos;
-                    periodoAcumulado.minutosExtrasDominicalFestivo += periodos.minutosExtrasDominicalFestivo;
-                    periodoAcumulado.minutosExtrasNocturnaDominicalFestivo += periodos.minutosExtrasNocturnaDominicalFestivo;
-                }
-
-                totalMinutos += periodoAcumulado.totalMinutos;
-                minutosNormales += periodoAcumulado.minutosNormales;
-                minutosExtrasOrdinarias += periodoAcumulado.minutosExtrasOrdinarias;
-                minutosExtrasNocturnas += periodoAcumulado.minutosExtrasNocturnas;
-                minutosNocturnas += periodoAcumulado.minutosNocturnas;
-                minutosDomingos += periodoAcumulado.minutosDomingos;
-                minutosFestivos += periodoAcumulado.minutosFestivos;
-                minutosDomingosFestivosNocturnos += periodoAcumulado.minutosDomingosFestivosNocturnos;
-                minutosExtrasDominicalFestivo += periodoAcumulado.minutosExtrasDominicalFestivo;
-                minutosExtrasNocturnaDominicalFestivo += periodoAcumulado.minutosExtrasNocturnaDominicalFestivo;
-
-                registrosCalculados.push({
-                    entrada: entrada.toISOString(),
-                    salida: salida.toISOString(),
-                    horasCalculadas: periodoAcumulado
-                });
-            }
-
-            const valorNormales = calcularValorPorMinutos(minutosNormales, tarifas.normal);
-            const valorExtrasOrdinarias = calcularValorPorMinutos(minutosExtrasOrdinarias, tarifas.extra);
-            const valorExtrasNocturnas = calcularValorPorMinutos(minutosExtrasNocturnas, tarifas.extraNocturno);
-            const valorNocturnas = calcularValorPorMinutos(minutosNocturnas, tarifas.nocturno);
-            const valorDomingos = calcularValorPorMinutos(minutosDomingos, tarifas.domingo);
-            const valorFestivos = calcularValorPorMinutos(minutosFestivos, tarifas.festivo);
-            const valorDomingosFestivosNocturnos = calcularValorPorMinutos(minutosDomingosFestivosNocturnos, tarifas.domingoFestivoNocturno);
-            const valorExtrasDominicalFestivo = calcularValorPorMinutos(minutosExtrasDominicalFestivo, tarifas.extraDominicalFestivo);
-            const valorExtrasNocturnaDominicalFestivo = calcularValorPorMinutos(minutosExtrasNocturnaDominicalFestivo, tarifas.extraNocturnaDominicalFestivo);
-
-            const valorTotal = Math.round((
-                valorNormales + valorExtrasOrdinarias + valorExtrasNocturnas +
-                valorNocturnas + valorDomingos + valorFestivos + valorDomingosFestivosNocturnos +
-                valorExtrasDominicalFestivo + valorExtrasNocturnaDominicalFestivo
-            ) * 100) / 100;
-
-            resultadosFinales.push({
-                ...usuarioData,
-                periodo: { inicio: fechaInicio.toISOString(), fin: fechaFin.toISOString() },
-                totalMinutos,
-                horasTotales: minutosAHoras(totalMinutos),
-                horasTotalesFormato: horasAFormato(minutosAHoras(totalMinutos)),
-                detalleMinutos: {
-                    normales: minutosNormales,
-                    extrasOrdinarias: minutosExtrasOrdinarias,
-                    extrasNocturnas: minutosExtrasNocturnas,
-                    nocturnas: minutosNocturnas,
-                    domingos: minutosDomingos,
-                    festivos: minutosFestivos,
-                    domingosFestivosNocturnos: minutosDomingosFestivosNocturnos,
-                    extrasDominicalFestivo: minutosExtrasDominicalFestivo,
-                    extrasNocturnaDominicalFestivo: minutosExtrasNocturnaDominicalFestivo
-                },
-                horasFormato: {
-                    normales: horasAFormato(minutosAHoras(minutosNormales)),
-                    extrasOrdinarias: horasAFormato(minutosAHoras(minutosExtrasOrdinarias)),
-                    extrasNocturnas: horasAFormato(minutosAHoras(minutosExtrasNocturnas)),
-                    nocturnas: horasAFormato(minutosAHoras(minutosNocturnas)),
-                    domingos: horasAFormato(minutosAHoras(minutosDomingos)),
-                    festivos: horasAFormato(minutosAHoras(minutosFestivos)),
-                    domingosFestivosNocturnos: horasAFormato(minutosAHoras(minutosDomingosFestivosNocturnos)),
-                    extrasDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasDominicalFestivo)),
-                    extrasNocturnaDominicalFestivo: horasAFormato(minutosAHoras(minutosExtrasNocturnaDominicalFestivo))
-                },
-                valorTotal,
-                detalleValores: {
-                    normal: valorNormales,
-                    extrasOrdinarias: valorExtrasOrdinarias,
-                    extrasNocturnas: valorExtrasNocturnas,
-                    nocturnas: valorNocturnas,
-                    domingos: valorDomingos,
-                    festivos: valorFestivos,
-                    domingosFestivosNocturnos: valorDomingosFestivosNocturnos,
-                    extrasDominicalFestivo: valorExtrasDominicalFestivo,
-                    extrasNocturnaDominicalFestivo: valorExtrasNocturnaDominicalFestivo
-                },
-                registros: registrosCalculados
-            });
-        }
-
-        // Importante! Ordenar o la presentación puede variar
-        return resultadosFinales;
-    } catch (error) {
-        console.error('Error al calcular horas globales optimizadas:', error);
-        throw error;
-    }
+    return resultado
 }
