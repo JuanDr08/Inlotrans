@@ -43,3 +43,7 @@ CLAUDE.md
 
 GUI/
 .playwright-mcp/
+
+# migration script (contiene service_role keys)
+scripts/migration.env
+scripts/migration-*.log

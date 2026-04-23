@@ -49,14 +49,15 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
         if (op) {
             setForm({ ...op })
         } else {
-            setForm({ nombre: '', status: true, limite_horas: 8, max_extras_dia: 2, minutos_almuerzo: 0 })
+            setForm({ codigo: '', nombre: '', status: true, limite_horas: 8, max_extras_dia: 2, minutos_almuerzo: 0 })
         }
         setOpenModal(true)
     }
 
     const handleSave = async (e: React.FormEvent) => {
         e.preventDefault()
-        if (!form.nombre?.trim()) return toast.error('El nombre es obligatorio')
+        if (!form.codigo?.trim()) return toast.error('El código de operación es obligatorio.')
+        if (!form.nombre?.trim()) return toast.error('El nombre es obligatorio.')
 
         setLoading(true)
         const { success, error } = await upsertOperacion(form)
@@ -164,6 +165,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-slate-50">
+                                <TableHead>Código</TableHead>
                                 <TableHead>Nombre de la Operación</TableHead>
                                 <TableHead>Estado</TableHead>
                                 <TableHead>Jornada</TableHead>
@@ -175,6 +177,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                         <TableBody>
                             {initialData.map((op) => (
                                 <TableRow key={op.id}>
+                                    <TableCell className="font-mono text-sm text-blue-700 font-semibold">{op.codigo}</TableCell>
                                     <TableCell className="font-medium">{op.nombre}</TableCell>
                                     <TableCell>
                                         {op.status ? (
@@ -212,7 +215,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
 
                             {initialData.length === 0 && (
                                 <TableRow>
-                                    <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                                         No hay operaciones configuradas
                                     </TableCell>
                                 </TableRow>
@@ -230,9 +233,21 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                     </DialogHeader>
                     <form onSubmit={handleSave} className="space-y-4 pt-4">
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">Nombre</label>
+                            <label className="text-sm font-medium">Código de Operación *</label>
                             <Input
                                 autoFocus
+                                required
+                                value={form.codigo || ''}
+                                onChange={e => setForm({ ...form, codigo: e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '') })}
+                                placeholder="Ej. INL-ADMI"
+                                maxLength={15}
+                                className="font-mono uppercase"
+                            />
+                            <p className="text-xs text-slate-500">Formato: INL-XXXX (identificador único del centro de costo).</p>
+                        </div>
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">Nombre *</label>
+                            <Input
                                 required
                                 value={form.nombre || ''}
                                 onChange={e => setForm({ ...form, nombre: e.target.value })}

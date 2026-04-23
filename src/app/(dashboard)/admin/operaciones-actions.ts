@@ -8,6 +8,7 @@ import { getUserProfile, requireAdmin } from '@/lib/auth'
 // Interfaz para la operación
 export type Operacion = {
     id: string
+    codigo: string
     nombre: string
     status: boolean
     limite_horas: 8 | 12
@@ -75,10 +76,10 @@ export async function upsertOperacion(operacion: Partial<Operacion>) {
     const supabase = await createClient()
 
     if (operacion.id) {
-        // Es actualización
         const { error } = await supabase
             .from('operaciones')
             .update({
+                codigo: operacion.codigo,
                 nombre: operacion.nombre,
                 status: operacion.status,
                 limite_horas: operacion.limite_horas ?? 8,
@@ -89,13 +90,18 @@ export async function upsertOperacion(operacion: Partial<Operacion>) {
 
         if (error) return { success: false, error: error.message }
     } else {
-        // Es Inserción nueva
+        if (!operacion.codigo?.trim()) return { success: false, error: 'El código de operación es obligatorio.' }
+
         const { data: existente } = await supabase.from('operaciones').select('id').eq('nombre', operacion.nombre).single()
         if (existente) return { success: false, error: 'Ya existe una operación con ese nombre.' }
+
+        const { data: codigoExistente } = await supabase.from('operaciones').select('id').eq('codigo', operacion.codigo).single()
+        if (codigoExistente) return { success: false, error: 'Ya existe una operación con ese código.' }
 
         const { error } = await supabase
             .from('operaciones')
             .insert({
+                codigo: operacion.codigo.trim().toUpperCase(),
                 nombre: operacion.nombre,
                 status: operacion.status ?? true,
                 limite_horas: operacion.limite_horas ?? 8,
