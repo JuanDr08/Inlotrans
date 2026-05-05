@@ -5,7 +5,7 @@ import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { getOperacionesActivas } from './operaciones-actions'
-import { Filter, RotateCcw, Check, X, ChevronDown } from 'lucide-react'
+import { Filter, RotateCcw, Check, X, ChevronDown, Download } from 'lucide-react'
 
 type TipoPeriodo = 'quincenal' | 'semanal' | 'mensual' | 'personalizado'
 
@@ -123,7 +123,7 @@ export function AdminFilters({ rol }: { rol: string; operacionFija: string | nul
             {/* Línea superior: filtros compactos */}
             <div className="flex flex-wrap items-end gap-3">
                 {/* Período */}
-                <div className="space-y-1.5 min-w-[160px] flex-1 md:flex-none">
+                <div className="space-y-1.5 min-w-40 flex-1 md:flex-none">
                     <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
                         Período
                     </Label>
@@ -140,7 +140,7 @@ export function AdminFilters({ rol }: { rol: string; operacionFija: string | nul
                 </div>
 
                 {/* Desde */}
-                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                <div className="space-y-1.5 flex-1 min-w-35">
                     <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
                         Desde
                     </Label>
@@ -156,7 +156,7 @@ export function AdminFilters({ rol }: { rol: string; operacionFija: string | nul
                 </div>
 
                 {/* Hasta */}
-                <div className="space-y-1.5 flex-1 min-w-[140px]">
+                <div className="space-y-1.5 flex-1 min-w-35">
                     <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
                         Hasta
                     </Label>
@@ -173,7 +173,7 @@ export function AdminFilters({ rol }: { rol: string; operacionFija: string | nul
 
                 {/* Operaciones (solo admin) */}
                 {rol !== 'coordinador' && (
-                    <div className="space-y-1.5 flex-1 min-w-[200px] relative" ref={dropdownRef}>
+                    <div className="space-y-1.5 flex-1 min-w-50 relative" ref={dropdownRef}>
                         <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
                             Operaciones
                         </Label>
@@ -253,6 +253,23 @@ export function AdminFilters({ rol }: { rol: string; operacionFija: string | nul
                     >
                         <Filter className="h-3.5 w-3.5" />
                         {isLoading ? 'Calculando…' : 'Aplicar'}
+                    </Button>
+                    <Button
+                        variant="outline"
+                        onClick={() => {
+                            const params = new URLSearchParams()
+                            params.set('start', start)
+                            params.set('end', end)
+                            if (operacionesSeleccionadas.length > 0) {
+                                params.set('op', operacionesSeleccionadas.join(','))
+                            }
+                            window.open(`/api/reportes/nomina?${params.toString()}`, '_blank')
+                        }}
+                        disabled={!start || !end}
+                        className="h-10 gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    >
+                        <Download className="h-3.5 w-3.5" />
+                        <span className="hidden sm:inline">Nómina</span>
                     </Button>
                 </div>
             </div>

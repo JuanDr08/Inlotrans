@@ -47,3 +47,7 @@ GUI/
 # migration script (contiene service_role keys)
 scripts/migration.env
 scripts/migration-*.log
+
+AGENTS.md
+scripts/
+.codex/
