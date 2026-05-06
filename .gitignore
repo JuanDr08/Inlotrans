@@ -51,3 +51,5 @@ scripts/migration-*.log
 AGENTS.md
 scripts/
 .codex/
+
+backup/
