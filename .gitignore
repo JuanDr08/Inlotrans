@@ -43,3 +43,8 @@ CLAUDE.md
 
 GUI/
 .playwright-mcp/
+
+AGENTS.md
+.codex/
+scripts/
+backup/
