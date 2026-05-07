@@ -1,7 +1,7 @@
 'use client'
 
-import { useMemo } from 'react'
-import { useRouter } from 'next/navigation'
+import { useMemo, useCallback } from 'react'
+import { useRouter, usePathname } from 'next/navigation'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,12 +32,13 @@ import {
     Wallet,
     ShieldAlert,
     Target,
-    Moon,
     Sun,
     Plus,
     ArrowDownLeft,
     ArrowUpRight,
     Info,
+    ChevronLeft,
+    ChevronRight,
 } from 'lucide-react'
 import type { ResumenEmpleadoPeriodo } from '@/lib/reportes'
 
@@ -220,7 +221,8 @@ function fechaSoloFecha(iso: string) {
 
 function nombreMes(iso: string) {
     const d = new Date(iso)
-    return d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
+    const s = d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
+    return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -285,6 +287,26 @@ export function EmpleadoDetalleClient(props: Props) {
     } = props
 
     const router = useRouter()
+    const pathname = usePathname()
+
+    const mesActual = useMemo(() => {
+        const d = new Date(mesRango.inicio)
+        return { year: d.getFullYear(), month: d.getMonth() }
+    }, [mesRango.inicio])
+
+    const esHoy = useMemo(() => {
+        const now = new Date()
+        return mesActual.year === now.getFullYear() && mesActual.month === now.getMonth()
+    }, [mesActual])
+
+    const navegarMes = useCallback(
+        (delta: number) => {
+            const d = new Date(mesActual.year, mesActual.month + delta, 1)
+            const param = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+            router.push(`${pathname}?mes=${param}`)
+        },
+        [mesActual, pathname, router],
+    )
 
     // KPIs derivados
     const jornadasInconsistentes = jornadasMes.filter((j) => j.estado === 'INCONSISTENTE').length
@@ -309,7 +331,17 @@ export function EmpleadoDetalleClient(props: Props) {
                 <Button variant="ghost" size="sm" onClick={() => router.back()} className="gap-2">
                     <ArrowLeft className="h-4 w-4" /> Volver
                 </Button>
-                <p className="text-sm text-slate-500">{nombreMes(mesRango.inicio)}</p>
+                <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navegarMes(-1)}>
+                        <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-sm font-medium text-slate-700 min-w-[140px] text-center">
+                        {nombreMes(mesRango.inicio)}
+                    </span>
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navegarMes(1)} disabled={esHoy}>
+                        <ChevronRight className="h-4 w-4" />
+                    </Button>
+                </div>
             </div>
 
             {/* ───── Header del empleado ───── */}

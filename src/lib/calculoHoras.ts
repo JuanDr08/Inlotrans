@@ -64,6 +64,11 @@ export function horasAFormato(horas: number): string {
     return `${horasEnteras}:${minutos.toString().padStart(2, '0')}`
 }
 
+export function redondearMediaHora(minutos: number): number {
+    if (minutos <= 0) return 0
+    return Math.floor(minutos / 30) * 30
+}
+
 // ==================================================
 // ZONA HORARIA — Colombia UTC-5 fijo (sin DST)
 // ==================================================
