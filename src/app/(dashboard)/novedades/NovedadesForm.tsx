@@ -212,8 +212,8 @@ export function NovedadesForm({}: NovedadesFormProps) {
                             <Input
                                 type="number"
                                 id="horas_compensa"
-                                step="0.25"
-                                min="0.25"
+                                step="0.5"
+                                min="0.5"
                                 value={horasCompensa}
                                 onChange={(e) => setHorasCompensa(e.target.value)}
                                 placeholder="Ej: 4 (se descontarán de la bolsa)"

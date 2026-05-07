@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import { getUserProfile, requireAdmin, requireAdminOrCoordinador } from '@/lib/auth'
 import { registrarCompensaTiempo } from '@/lib/jornadas'
+import { redondearMediaHora } from '@/lib/calculoHoras'
 
 export async function crearNovedad(formData: FormData) {
     const profile = await getUserProfile()
@@ -85,7 +86,7 @@ export async function crearNovedad(formData: FormData) {
             await supabase.from('novedades').delete().eq('id', novedad.id)
             return { success: false, error: 'Horas de compensación inválidas.' }
         }
-        const minutos = Math.round(horas * 60)
+        const minutos = redondearMediaHora(Math.round(horas * 60))
         const res = await registrarCompensaTiempo({
             empleadoId: usuario_id,
             minutos,

@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import {
     calcularPeriodosHorasOptimizado,
     obtenerFestivosParaRango,
+    redondearMediaHora,
     toColombiaTime,
     type PeriodosHoras,
 } from '@/lib/calculoHoras'
@@ -64,32 +65,37 @@ type Resultado<T> = { data: T | null; error: string | null }
 // HELPERS
 // ==================================================
 
-function sumarNueveTipos(p: PeriodosHoras): number {
-    return (
-        p.minutosNormales +
-        p.minutosNocturnas +
-        p.minutosDomingos +
-        p.minutosFestivos +
-        p.minutosDomingosFestivosNocturnos +
-        p.minutosExtrasOrdinarias +
-        p.minutosExtrasNocturnas +
-        p.minutosExtrasDominicalFestivo +
-        p.minutosExtrasNocturnaDominicalFestivo
-    )
-}
-
 function periodosASnapshot(p: PeriodosHoras, minutosAlmuerzoDescontados: number): SnapshotMinutos {
+    const minutos_normales = redondearMediaHora(p.minutosNormales)
+    const minutos_nocturnas = redondearMediaHora(p.minutosNocturnas)
+    const minutos_domingos = redondearMediaHora(p.minutosDomingos)
+    const minutos_festivos = redondearMediaHora(p.minutosFestivos)
+    const minutos_domingos_festivos_nocturnos = redondearMediaHora(p.minutosDomingosFestivosNocturnos)
+    const minutos_extras_ordinarias = redondearMediaHora(p.minutosExtrasOrdinarias)
+    const minutos_extras_nocturnas = redondearMediaHora(p.minutosExtrasNocturnas)
+    const minutos_extras_dominical_festivo = redondearMediaHora(p.minutosExtrasDominicalFestivo)
+    const minutos_extras_nocturna_dominical_festivo = redondearMediaHora(p.minutosExtrasNocturnaDominicalFestivo)
+
     return {
-        minutos_normales: p.minutosNormales,
-        minutos_nocturnas: p.minutosNocturnas,
-        minutos_domingos: p.minutosDomingos,
-        minutos_festivos: p.minutosFestivos,
-        minutos_domingos_festivos_nocturnos: p.minutosDomingosFestivosNocturnos,
-        minutos_extras_ordinarias: p.minutosExtrasOrdinarias,
-        minutos_extras_nocturnas: p.minutosExtrasNocturnas,
-        minutos_extras_dominical_festivo: p.minutosExtrasDominicalFestivo,
-        minutos_extras_nocturna_dominical_festivo: p.minutosExtrasNocturnaDominicalFestivo,
-        minutos_total: sumarNueveTipos(p),
+        minutos_normales,
+        minutos_nocturnas,
+        minutos_domingos,
+        minutos_festivos,
+        minutos_domingos_festivos_nocturnos,
+        minutos_extras_ordinarias,
+        minutos_extras_nocturnas,
+        minutos_extras_dominical_festivo,
+        minutos_extras_nocturna_dominical_festivo,
+        minutos_total:
+            minutos_normales +
+            minutos_nocturnas +
+            minutos_domingos +
+            minutos_festivos +
+            minutos_domingos_festivos_nocturnos +
+            minutos_extras_ordinarias +
+            minutos_extras_nocturnas +
+            minutos_extras_dominical_festivo +
+            minutos_extras_nocturna_dominical_festivo,
         minutos_almuerzo_descontados: minutosAlmuerzoDescontados,
     }
 }

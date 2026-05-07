@@ -16,13 +16,16 @@ import { EmpleadoDetalleClient } from './EmpleadoDetalleClient'
 
 export default async function EmpleadoDetallePage({
     params,
+    searchParams,
 }: {
     params: Promise<{ cedula: string }>
+    searchParams: Promise<{ mes?: string }>
 }) {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
 
     const { cedula } = await params
+    const { mes } = await searchParams
 
     const empleado = await getEmpleadoDetalle(cedula)
     if (!empleado) notFound()
@@ -31,10 +34,21 @@ export default async function EmpleadoDetallePage({
         redirect('/empleados')
     }
 
-    // Rango del mes actual (en hora local del server)
+    // Rango del mes seleccionado (searchParam ?mes=YYYY-MM) o mes actual
     const now = new Date()
-    const mesInicio = new Date(now.getFullYear(), now.getMonth(), 1)
-    const mesFin = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+    let year = now.getFullYear()
+    let month = now.getMonth()
+
+    if (mes && /^\d{4}-\d{2}$/.test(mes)) {
+        const [y, m] = mes.split('-').map(Number)
+        if (y >= 2020 && y <= 2100 && m >= 1 && m <= 12) {
+            year = y
+            month = m - 1
+        }
+    }
+
+    const mesInicio = new Date(year, month, 1)
+    const mesFin = new Date(year, month + 1, 0, 23, 59, 59, 999)
 
     const [
         jornadasMes,
