@@ -25,8 +25,8 @@ type TipoPlano = 'cumpleanos' | 'auxilio' | 'extras'
 
 const PLANOS: { value: TipoPlano; label: string; enabled: boolean }[] = [
     { value: 'cumpleanos', label: 'Cumpleaños', enabled: true },
-    { value: 'auxilio', label: 'Auxilio No Prestacional', enabled: false },
-    { value: 'extras', label: 'Horas Extras', enabled: false },
+    { value: 'auxilio', label: 'Auxilio No Prestacional', enabled: true },
+    { value: 'extras', label: 'Horas Extras', enabled: true },
 ]
 
 const MESES = [
@@ -36,8 +36,8 @@ const MESES = [
 
 const PLANO_ROUTES: Record<TipoPlano, string> = {
     cumpleanos: '/api/reportes/planos/cumpleanos',
-    auxilio: '',
-    extras: '',
+    auxilio: '/api/reportes/planos/auxilio',
+    extras: '/api/reportes/planos/extras',
 }
 
 export function ExportPlanosDialog() {

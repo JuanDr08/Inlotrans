@@ -39,6 +39,8 @@ const TIPOS_NOVEDAD = [
     // Tiempo
     { value: 'COMPENSA_TIEMPO',   label: 'Compensa Tiempo',    grupo: 'Tiempo',            requiereFechas: false, requiereHoras: true },
     { value: 'PAGA_TIEMPO',       label: 'Paga Tiempo',        grupo: 'Tiempo',            requiereFechas: false },
+    // Auxilios
+    { value: 'AUXILIO_NO_PRESTACIONAL', label: 'Auxilio No Prestacional', grupo: 'Auxilios', requiereFechas: false, requiereValor: true },
     // Movimientos
     { value: 'TRASLADO',          label: 'Traslado',           grupo: 'Movimientos',       requiereFechas: false },
     { value: 'INGRESO_NUEVO',     label: 'Ingreso Nuevo',      grupo: 'Movimientos',       requiereFechas: false },
@@ -62,11 +64,12 @@ export function NovedadesForm({}: NovedadesFormProps) {
     const [horasCompensa, setHorasCompensa] = useState('')
 
     const tipoConfig = TIPOS_NOVEDAD.find((t) => t.value === tipoNovedad) as
-        | (typeof TIPOS_NOVEDAD)[number] & { requiereCausa?: boolean; requiereHoras?: boolean }
+        | (typeof TIPOS_NOVEDAD)[number] & { requiereCausa?: boolean; requiereHoras?: boolean; requiereValor?: boolean }
         | undefined
     const necesitaRangoFechas = tipoConfig?.requiereFechas ?? false
     const necesitaCausa = tipoConfig?.requiereCausa ?? false
     const necesitaHoras = tipoConfig?.requiereHoras ?? false
+    const necesitaValor = tipoConfig?.requiereValor ?? false
 
     useEffect(() => {
         const fetchNombre = async () => {
@@ -256,13 +259,14 @@ export function NovedadesForm({}: NovedadesFormProps) {
                     )}
 
                     <div className="space-y-2">
-                        <Label htmlFor="valor_monetario">Valor Monetario (COP)</Label>
+                        <Label htmlFor="valor_monetario">Valor Monetario (COP){necesitaValor ? ' *' : ''}</Label>
                         <Input
                             type="number"
                             id="valor_monetario"
                             name="valor_monetario"
-                            placeholder="Opcional"
+                            placeholder={necesitaValor ? 'Ingrese el valor del auxilio' : 'Opcional'}
                             min="0"
+                            required={necesitaValor}
                         />
                     </div>
 
