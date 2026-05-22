@@ -18,6 +18,7 @@ export async function crearNovedad(formData: FormData) {
     const valor_monetario_raw = formData.get('valor_monetario') as string | null
     const es_pagado_raw = formData.get('es_pagado') as string | null
     const codigo_causa_raw = formData.get('codigo_causa') as string | null
+    const tipo_ausentismo_raw = formData.get('tipo_ausentismo') as string | null
     const horas_compensa_raw = formData.get('horas_compensa') as string | null
     const fecha_unica = formData.get('fecha_novedad') as string | null
     const fecha_inicio_raw = formData.get('fecha_inicio') as string | null
@@ -67,6 +68,7 @@ export async function crearNovedad(formData: FormData) {
             fecha_fin,
             es_pagado: es_pagado_raw === 'true',
             codigo_causa: codigo_causa_raw ? parseInt(codigo_causa_raw, 10) : null,
+            tipo_ausentismo: tipo_ausentismo_raw ? parseInt(tipo_ausentismo_raw, 10) : null,
             valor_monetario: valor_monetario_raw ? parseFloat(valor_monetario_raw) : null,
             descripcion,
         })

@@ -38,7 +38,7 @@ ABIERTO ──┬──► CERRADO          (empleado cierra desde quiosco)
 | `operaciones`         | Centros de trabajo con `limite_horas` (8 o 12), `minutos_almuerzo` (descuento automático) y `max_extras_dia`. |
 | `turnos`              | Horarios por operación — **referencia informativa, no conectado al motor aún**. |
 | `tarifas`             | Precio por hora por tipo de concepto (9 tipos, valores 2026). |
-| `novedades`           | Incapacidades, compensaciones, permisos, etc. Campos: `tipo_novedad`, `fecha_novedad`, `fecha_inicio/fin`, `es_pagado`, `codigo_causa`, `valor_monetario`, `descripcion`. |
+| `novedades`           | Incapacidades, compensaciones, permisos, etc. Campos: `tipo_novedad`, `fecha_novedad`, `fecha_inicio/fin`, `es_pagado`, `codigo_causa` (código de causa de ausentismo), `valor_monetario`, `descripcion`, `tipo_ausentismo` (entero nullable — código de tipo de ausentismo para nómina). Incluye el tipo `AUXILIO_NO_PRESTACIONAL`. |
 | `jornadas`            | Entidad central. Contiene `entrada`, `salida`, `estado`, snapshot de 9 tipos de minutos, `minutos_total`, `minutos_almuerzo_descontados`, `alerta_critica`, `cerrada_por`. |
 | `aprobaciones_extras` | Toda hora >8h requiere aprobación. Estados: `PENDIENTE` / `APROBADA` / `RECHAZADA`. |
 | `bolsa_horas`         | 1 fila por empleado. `saldo_minutos` (positivo = a favor, negativo = deuda). |
@@ -169,7 +169,15 @@ src/
 │   ├── page.tsx                        # Quiosco (ENTRADA / SALIDA)
 │   ├── actions.ts                      # validarCedula, registrarAsistenciaAPI
 │   ├── login/                          # Email+password via Supabase Auth
-│   ├── api/cron/autocierre/route.ts
+│   ├── api/
+│   │   ├── cron/autocierre/route.ts
+│   │   └── reportes/
+│   │       ├── nomina/route.ts
+│   │       └── planos/
+│   │           ├── cumpleanos/route.ts
+│   │           ├── auxilio/route.ts
+│   │           ├── extras/route.ts
+│   │           └── otro/route.ts
 │   └── (dashboard)/                    # Layout con sidebar
 │       ├── admin/                      # Reporte administrativo + KPIs
 │       │   ├── operaciones/            # CRUD de operaciones + turnos (admin only)
@@ -184,10 +192,21 @@ src/
 │   ├── calculoHoras.ts                 # Motor por tramos + utilidades tiempo
 │   ├── jornadas.ts                     # API de jornadas + motor de liquidación
 │   ├── reportes.ts                     # Agregación por período
+│   ├── constants/
+│   │   └── ausentismos.ts              # Constantes: tipos, clases, causas ausentismo + códigos nómina
+│   ├── excel/                          # Generadores Excel
+│   │   ├── nomina.ts
+│   │   └── planos/
+│   │       ├── cumpleanos.ts
+│   │       ├── auxilio.ts
+│   │       ├── extras.ts
+│   │       └── otro.ts
 │   ├── supabase/                       # client / server / middleware / admin
 │   └── utils.ts                        # cn()
 │
-├── components/ui/                      # shadcn (card, button, table, etc.)
+├── components/
+│   ├── ui/                             # shadcn (card, button, table, etc.)
+│   └── ExportPlanosDialog.tsx          # Diálogo de selección para descarga de planos
 └── middleware.ts                       # Auth + RBAC route gates
 ```
 
@@ -243,7 +262,6 @@ CRON_SECRET                     # opcional: protege /api/cron/autocierre
 
 ## 12. Futuro / no en scope
 
-- **Reportes Excel**: se eliminaron durante la migración al modelo de jornadas. Se re-diseñarán sobre el nuevo snapshot.
 - **Turnos → motor**: los turnos ya existen como tabla pero no participan del cálculo. A futuro, `usuarios.turno_id` permitiría umbrales dinámicos.
 - **Widget "Cierre de Semana"** en dashboard del coordinador (barra de progreso por empleado hacia 44h).
 - **Decisión automática** cuando no completa las 44h y no hay novedad: actualmente deja `paga_domingo = false` y requiere intervención manual.

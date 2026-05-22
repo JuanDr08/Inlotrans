@@ -1,6 +1,5 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getUserProfile, requireAdmin } from '@/lib/auth'
 import { revalidatePath } from 'next/cache'
@@ -18,11 +17,9 @@ export async function listarUsuarios(): Promise<{ success: boolean; data?: Perfi
     const profile = await getUserProfile()
     requireAdmin(profile)
 
-    const supabase = await createClient()
     const adminClient = createAdminClient()
 
-    // Obtener perfiles
-    const { data: perfiles, error } = await supabase
+    const { data: perfiles, error } = await adminClient
         .from('perfiles')
         .select('*')
         .order('created_at', { ascending: true })
