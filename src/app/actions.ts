@@ -40,7 +40,7 @@ export async function getEstadoJornada(cedula: string) {
     }
 
     const fechaEntrada = new Date(jornada.entrada)
-    const hora = fechaEntrada.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })
+    const hora = fechaEntrada.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' })
 
     return {
         success: true,

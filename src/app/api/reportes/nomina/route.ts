@@ -3,6 +3,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toColombiaTime } from '@/lib/calculoHoras'
 import { generarExcelNomina, type LineaNomina, type TarifaConCodigo } from '@/lib/excel/nomina'
 
+function minToHalfHours(min: number): number {
+    return Math.floor(min / 30) / 2
+}
+
 export const dynamic = 'force-dynamic'
 
 // ════════════════════════════════════════════════════════════════════
@@ -170,15 +174,15 @@ export async function GET(request: NextRequest) {
                 nombre: usuario.nombre,
                 horaIn,
                 horaOut,
-                almuerzo: (r.minutos_almuerzo_descontados as number) / 60,
+                almuerzo: minToHalfHours(r.minutos_almuerzo_descontados as number),
                 horas,
-                extraDiurna: (r.minutos_extras_ordinarias as number) / 60,
-                extraNocturna: (r.minutos_extras_nocturnas as number) / 60,
-                extraFestivaDiurna: (r.minutos_extras_dominical_festivo as number) / 60,
-                extraFestivaNocturna: (r.minutos_extras_nocturna_dominical_festivo as number) / 60,
-                recargoNocturno: (r.minutos_nocturnas as number) / 60,
-                recargoFestivoNocturno: (r.minutos_domingos_festivos_nocturnos as number) / 60,
-                recargoFestivo: ((r.minutos_festivos as number) + (r.minutos_domingos as number)) / 60,
+                extraDiurna: minToHalfHours(r.minutos_extras_ordinarias as number),
+                extraNocturna: minToHalfHours(r.minutos_extras_nocturnas as number),
+                extraFestivaDiurna: minToHalfHours(r.minutos_extras_dominical_festivo as number),
+                extraFestivaNocturna: minToHalfHours(r.minutos_extras_nocturna_dominical_festivo as number),
+                recargoNocturno: minToHalfHours(r.minutos_nocturnas as number),
+                recargoFestivoNocturno: minToHalfHours(r.minutos_domingos_festivos_nocturnos as number),
+                recargoFestivo: minToHalfHours((r.minutos_festivos as number) + (r.minutos_domingos as number)),
                 operacion: opNombre,
                 codigoOperacion: opCodigo,
                 detalleOperacion: '',
