@@ -3,8 +3,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toColombiaTime } from '@/lib/calculoHoras'
 import { generarExcelNomina, type LineaNomina, type TarifaConCodigo } from '@/lib/excel/nomina'
 
-function minToHalfHours(min: number): number {
-    return Math.floor(min / 30) / 2
+function minToRoundedHours(min: number): number {
+    if (min <= 0) return 0
+    const remainder = min % 60
+    const base = Math.floor(min / 60)
+    return remainder >= 30 ? base + 1 : base
 }
 
 export const dynamic = 'force-dynamic'
@@ -174,15 +177,15 @@ export async function GET(request: NextRequest) {
                 nombre: usuario.nombre,
                 horaIn,
                 horaOut,
-                almuerzo: minToHalfHours(r.minutos_almuerzo_descontados as number),
+                almuerzo: minToRoundedHours(r.minutos_almuerzo_descontados as number),
                 horas,
-                extraDiurna: minToHalfHours(r.minutos_extras_ordinarias as number),
-                extraNocturna: minToHalfHours(r.minutos_extras_nocturnas as number),
-                extraFestivaDiurna: minToHalfHours(r.minutos_extras_dominical_festivo as number),
-                extraFestivaNocturna: minToHalfHours(r.minutos_extras_nocturna_dominical_festivo as number),
-                recargoNocturno: minToHalfHours(r.minutos_nocturnas as number),
-                recargoFestivoNocturno: minToHalfHours(r.minutos_domingos_festivos_nocturnos as number),
-                recargoFestivo: minToHalfHours((r.minutos_festivos as number) + (r.minutos_domingos as number)),
+                extraDiurna: minToRoundedHours(r.minutos_extras_ordinarias as number),
+                extraNocturna: minToRoundedHours(r.minutos_extras_nocturnas as number),
+                extraFestivaDiurna: minToRoundedHours(r.minutos_extras_dominical_festivo as number),
+                extraFestivaNocturna: minToRoundedHours(r.minutos_extras_nocturna_dominical_festivo as number),
+                recargoNocturno: minToRoundedHours(r.minutos_nocturnas as number),
+                recargoFestivoNocturno: minToRoundedHours(r.minutos_domingos_festivos_nocturnos as number),
+                recargoFestivo: minToRoundedHours((r.minutos_festivos as number) + (r.minutos_domingos as number)),
                 operacion: opNombre,
                 codigoOperacion: opCodigo,
                 detalleOperacion: '',
