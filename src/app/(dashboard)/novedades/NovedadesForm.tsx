@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { crearNovedad, buscarEmpleadoNombre } from './actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import { TIPOS_AUSENTISMO, CAUSAS_AUSENTISMO } from '@/lib/constants/ausentismos'
 
 // Tipos de novedades con metadata de comportamiento
 const TIPOS_NOVEDAD = [
@@ -22,8 +23,8 @@ const TIPOS_NOVEDAD = [
     { value: 'PERMISO',           label: 'Permiso',            grupo: 'Ausencias',         requiereFechas: false },
     { value: 'SANCION',           label: 'Sanción',            grupo: 'Ausencias',         requiereFechas: true  },
     // Incapacidades
-    { value: 'INCAPACIDAD',       label: 'Incapacidad',        grupo: 'Incapacidades',     requiereFechas: true,  requiereCausa: true },
-    { value: 'INCAPACIDAD_ARL',   label: 'Incapacidad ARL',    grupo: 'Incapacidades',     requiereFechas: true,  requiereCausa: true },
+    { value: 'INCAPACIDAD',       label: 'Incapacidad',        grupo: 'Incapacidades',     requiereFechas: true  },
+    { value: 'INCAPACIDAD_ARL',   label: 'Incapacidad ARL',    grupo: 'Incapacidades',     requiereFechas: true  },
     // Licencias
     { value: 'LIC_NO_REMUNERADA', label: 'Lic. No Remunerada', grupo: 'Licencias',         requiereFechas: true  },
     { value: 'LIC_LUTO',          label: 'Lic. de Luto',       grupo: 'Licencias',         requiereFechas: true  },
@@ -61,13 +62,13 @@ export function NovedadesForm({}: NovedadesFormProps) {
     const [tipoNovedad, setTipoNovedad] = useState('')
     const [esPagado, setEsPagado] = useState('false')
     const [codigoCausa, setCodigoCausa] = useState('')
+    const [tipoAusentismo, setTipoAusentismo] = useState('')
     const [horasCompensa, setHorasCompensa] = useState('')
 
     const tipoConfig = TIPOS_NOVEDAD.find((t) => t.value === tipoNovedad) as
-        | (typeof TIPOS_NOVEDAD)[number] & { requiereCausa?: boolean; requiereHoras?: boolean; requiereValor?: boolean }
+        | (typeof TIPOS_NOVEDAD)[number] & { requiereHoras?: boolean; requiereValor?: boolean }
         | undefined
     const necesitaRangoFechas = tipoConfig?.requiereFechas ?? false
-    const necesitaCausa = tipoConfig?.requiereCausa ?? false
     const necesitaHoras = tipoConfig?.requiereHoras ?? false
     const necesitaValor = tipoConfig?.requiereValor ?? false
 
@@ -113,7 +114,8 @@ export function NovedadesForm({}: NovedadesFormProps) {
         formData.append('usuario_id', cedula)
         formData.append('tipo_novedad', tipoNovedad)
         formData.append('es_pagado', esPagado)
-        if (necesitaCausa) formData.append('codigo_causa', codigoCausa)
+        if (codigoCausa) formData.append('codigo_causa', codigoCausa)
+        if (tipoAusentismo) formData.append('tipo_ausentismo', tipoAusentismo)
         if (necesitaHoras) formData.append('horas_compensa', horasCompensa)
 
         const result = await crearNovedad(formData)
@@ -132,6 +134,7 @@ export function NovedadesForm({}: NovedadesFormProps) {
         setTipoNovedad('')
         setEsPagado('false')
         setCodigoCausa('')
+        setTipoAusentismo('')
         setHorasCompensa('')
         router.refresh()
     }
@@ -238,23 +241,34 @@ export function NovedadesForm({}: NovedadesFormProps) {
                         />
                     </div>
 
-                    {necesitaCausa && (
-                        <div className="space-y-2">
-                            <Label htmlFor="codigo_causa">Código de Causa (EPS)</Label>
-                            <Select value={codigoCausa} onValueChange={setCodigoCausa}>
-                                <SelectTrigger>
-                                    <SelectValue placeholder="Seleccione causa..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                    <SelectItem value="1">1 - Licencia Remunerada</SelectItem>
-                                    <SelectItem value="3">3 - Maternidad/Paternidad</SelectItem>
-                                    <SelectItem value="4">4 - Enfermedad General</SelectItem>
-                                    <SelectItem value="5">5 - Enfermedad Profesional</SelectItem>
-                                    <SelectItem value="6">6 - Accidente de Trabajo</SelectItem>
-                                    <SelectItem value="10">10 - Cita Médica</SelectItem>
-                                    <SelectItem value="14">14 - Calamidad</SelectItem>
-                                </SelectContent>
-                            </Select>
+                    {tipoNovedad && (
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <Label htmlFor="tipo_ausentismo">Tipo de Ausentismo</Label>
+                                <Select value={tipoAusentismo} onValueChange={setTipoAusentismo}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Seleccione tipo..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(TIPOS_AUSENTISMO).map(([code, label]) => (
+                                            <SelectItem key={code} value={code}>{code} - {label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-2">
+                                <Label htmlFor="codigo_causa">Causa de Ausentismo</Label>
+                                <Select value={codigoCausa} onValueChange={setCodigoCausa}>
+                                    <SelectTrigger>
+                                        <SelectValue placeholder="Seleccione causa..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(CAUSAS_AUSENTISMO).map(([code, label]) => (
+                                            <SelectItem key={code} value={code}>{code} - {label}</SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
                         </div>
                     )}
 

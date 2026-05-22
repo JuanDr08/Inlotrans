@@ -20,13 +20,15 @@ import {
     SelectValue,
 } from '@/components/ui/select'
 import { FileSpreadsheet, Download } from 'lucide-react'
+import { TIPOS_AUSENTISMO, CLASES_AUSENTISMO, CAUSAS_AUSENTISMO } from '@/lib/constants/ausentismos'
 
-type TipoPlano = 'cumpleanos' | 'auxilio' | 'extras'
+type TipoPlano = 'cumpleanos' | 'auxilio' | 'extras' | 'otro'
 
-const PLANOS: { value: TipoPlano; label: string; enabled: boolean }[] = [
-    { value: 'cumpleanos', label: 'Cumpleaños', enabled: true },
-    { value: 'auxilio', label: 'Auxilio No Prestacional', enabled: true },
-    { value: 'extras', label: 'Horas Extras', enabled: true },
+const PLANOS: { value: TipoPlano; label: string }[] = [
+    { value: 'cumpleanos', label: 'Cumpleaños' },
+    { value: 'auxilio', label: 'Auxilio No Prestacional' },
+    { value: 'extras', label: 'Horas Extras' },
+    { value: 'otro', label: 'Otro (por ausentismo)' },
 ]
 
 const MESES = [
@@ -38,6 +40,7 @@ const PLANO_ROUTES: Record<TipoPlano, string> = {
     cumpleanos: '/api/reportes/planos/cumpleanos',
     auxilio: '/api/reportes/planos/auxilio',
     extras: '/api/reportes/planos/extras',
+    otro: '/api/reportes/planos/otro',
 }
 
 export function ExportPlanosDialog() {
@@ -46,10 +49,13 @@ export function ExportPlanosDialog() {
     const [mes, setMes] = useState(String(now.getMonth()))
     const [anio, setAnio] = useState(String(now.getFullYear()))
     const [quincena, setQuincena] = useState<'1' | '2'>('1')
+    const [tipoAusentismo, setTipoAusentismo] = useState('')
+    const [causaAusentismo, setCausaAusentismo] = useState('')
+    const [claseAusentismo, setClaseAusentismo] = useState('')
     const [open, setOpen] = useState(false)
 
-    const planoInfo = PLANOS.find((p) => p.value === plano)!
-    const canDownload = planoInfo.enabled
+    const isOtro = plano === 'otro'
+    const canDownload = isOtro ? !!(tipoAusentismo && causaAusentismo && claseAusentismo) : true
 
     function handleDownload() {
         const route = PLANO_ROUTES[plano]
@@ -61,6 +67,13 @@ export function ExportPlanosDialog() {
             mes: String(mesNum),
             quincena,
         })
+
+        if (isOtro) {
+            params.set('tipo', tipoAusentismo)
+            params.set('causa', causaAusentismo)
+            params.set('clase', claseAusentismo)
+        }
+
         window.open(`${route}?${params.toString()}`, '_blank')
         setOpen(false)
     }
@@ -95,13 +108,69 @@ export function ExportPlanosDialog() {
                             </SelectTrigger>
                             <SelectContent>
                                 {PLANOS.map((p) => (
-                                    <SelectItem key={p.value} value={p.value} disabled={!p.enabled}>
-                                        {p.label}{!p.enabled ? ' (próximamente)' : ''}
+                                    <SelectItem key={p.value} value={p.value}>
+                                        {p.label}
                                     </SelectItem>
                                 ))}
                             </SelectContent>
                         </Select>
                     </div>
+
+                    {isOtro && (
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                                    Tipo
+                                </Label>
+                                <Select value={tipoAusentismo} onValueChange={setTipoAusentismo}>
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Tipo..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(TIPOS_AUSENTISMO).map(([code, label]) => (
+                                            <SelectItem key={code} value={code}>
+                                                {code} - {label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                                    Clase
+                                </Label>
+                                <Select value={claseAusentismo} onValueChange={setClaseAusentismo}>
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Clase..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(CLASES_AUSENTISMO).map(([code, label]) => (
+                                            <SelectItem key={code} value={code}>
+                                                {code} - {label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                                <Label className="text-xs font-medium text-slate-600 uppercase tracking-wide">
+                                    Causa
+                                </Label>
+                                <Select value={causaAusentismo} onValueChange={setCausaAusentismo}>
+                                    <SelectTrigger className="w-full">
+                                        <SelectValue placeholder="Causa..." />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        {Object.entries(CAUSAS_AUSENTISMO).map(([code, label]) => (
+                                            <SelectItem key={code} value={code}>
+                                                {code} - {label}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectContent>
+                                </Select>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="grid grid-cols-3 gap-3">
                         <div className="space-y-1.5">

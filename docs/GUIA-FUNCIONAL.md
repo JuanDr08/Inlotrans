@@ -21,6 +21,7 @@ Acceso total a todo el sistema. Puede hacer lo mismo que el coordinador pero par
 - Crear y editar operaciones (centros de trabajo)
 - Gestionar usuarios del sistema (otros admins y coordinadores)
 - Descargar reportes Excel de nómina
+- Descargar planos de ausentismo (cumpleaños, auxilio no prestacional, horas extras, otros)
 - Ver el reporte administrativo global
 
 ---
@@ -145,6 +146,16 @@ Las **novedades** son eventos que el coordinador registra manualmente para un em
 | GANA_FESTIVO | Marcación de pago festivo |
 | TRASLADO / INGRESO_NUEVO / RETIRO | Movimientos de personal |
 | FIN_TURNO_NOCHE / FIN_TURNO_DIA | Fin de turno administrativo |
+| AUXILIO_NO_PRESTACIONAL | Auxilio económico no prestacional |
+
+#### Campos de ausentismo para nómina
+
+Cada novedad puede tener dos campos opcionales que se usan para generar los planos de ausentismo en Excel:
+
+- **Tipo de Ausentismo**: código numérico (1-7) que clasifica la novedad según el sistema de ausentismos de nómina (ej: 1 = Incapacidades, 6 = Licencia).
+- **Causa de Ausentismo**: código numérico (1-50) que identifica la causa específica del ausentismo (ej: 1 = Lic Remunerada, 4 = Enfermedad General).
+
+Ambos son opcionales. Se requieren únicamente cuando se va a generar el plano de tipo "Otro (por ausentismo)".
 
 #### Propiedad "Es remunerada" (es_pagado)
 
@@ -204,7 +215,7 @@ La sección de **Administración** muestra un resumen general con:
 - **KPIs globales**: empleados con jornadas, horas liquidadas, valor total, operaciones filtradas.
 - **Tablas por período**: cada grupo (quincena, semana, etc.) lista a cada empleado con sus horas totales, desglose de recargos (badges de color por tipo) y valor monetario.
 
-Desde esta misma pantalla se puede **descargar el Excel de nómina** (botón verde "Nómina") usando el rango de fechas seleccionado.
+Desde esta misma pantalla se puede **descargar el Excel de nómina** (botón verde "Nómina") y abrir el diálogo de **planos de ausentismo** (botón "Planos") usando el rango de fechas seleccionado.
 
 ---
 
@@ -248,7 +259,37 @@ Si un empleado tiene **novedad pero no trabajó ese día** (ej: incapacidad), ap
 
 ---
 
-### 11. CRON nocturno (proceso automático)
+### 11. Planos de Ausentismo (Excel)
+
+Los **planos** son archivos Excel con un formato fijo que el área de nómina usa para reportar ausentismos y novedades al sistema de nómina de la empresa. Se descargan desde el reporte administrativo usando el botón "Planos".
+
+#### Cómo usarlos
+
+1. En el reporte administrativo, hacer clic en el botón **"Planos"**.
+2. En el diálogo que aparece, seleccionar:
+   - **Tipo de plano**: qué tipo de novedad se va a exportar.
+   - **Mes** y **Quincena** (1ª: días 1–15, 2ª: días 16–fin de mes).
+   - Para el tipo "Otro": también seleccionar el tipo de ausentismo, clase y causa.
+3. El archivo se descarga automáticamente.
+
+#### Tipos de planos disponibles
+
+| Tipo | Fuente de datos | Descripción |
+|------|----------------|-------------|
+| **Cumpleaños** | Novedades `DIA_CUMPLEANOS` en la quincena | Una fila por empleado que cumplió años en ese período |
+| **Auxilio No Prestacional** | Novedades `AUXILIO_NO_PRESTACIONAL` en la quincena | Incluye el valor monetario del auxilio |
+| **Horas Extras** | Jornadas cerradas con extras aprobadas en la quincena | Desglosa por código de nómina (diurnas, nocturnas, festivas, recargos) |
+| **Otro (por ausentismo)** | Novedades con el tipo/causa de ausentismo seleccionado | Genérico para cualquier tipo de ausentismo registrado con los campos de nómina |
+
+#### Estructura de cada plano
+
+Cada archivo Excel contiene **dos hojas**:
+- **Hoja 1**: formato legible, con encabezados descriptivos y bloque de metadatos.
+- **Hoja 2**: formato plano para importación directa al sistema de nómina (sin encabezados, columnas fijas).
+
+---
+
+### 12. CRON nocturno (proceso automático)
 
 Todos los días a las **19:00 hora Colombia** (medianoche UTC), el sistema ejecuta automáticamente:
 
