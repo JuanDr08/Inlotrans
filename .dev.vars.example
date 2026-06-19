@@ -1,0 +1,5 @@
+# Cloudflare Workers local dev secrets
+# Copy to .dev.vars and fill values
+
+AUTH_SECRET=your-jwt-secret-min-32-chars
+CRON_SECRET=optional-cron-bearer-token

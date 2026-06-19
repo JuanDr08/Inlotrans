@@ -1,0 +1,34 @@
+# Inlotrans Asistencia — Cloudflare Workers Configuration
+# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+
+name = "inlotrans-asistencia"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── Pages / Next.js (via @opennextjs/cloudflare) ─────────────
+# The actual deployment is handled by the OpenNext adapter.
+# This config defines the bindings available to the Worker.
+
+# ─── D1 Database ──────────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "inlotrans-asistencia-db"
+database_id = ""  # Fill after: wrangler d1 create inlotrans-asistencia-db
+
+# ─── KV Namespace (caches: festivos, tarifas) ────────────────
+[[kv_namespaces]]
+binding = "CACHE"
+id = ""  # Fill after: wrangler kv namespace create CACHE
+
+# ─── Cron Triggers ────────────────────────────────────────────
+[triggers]
+crons = ["0 0 * * *"]  # Daily at 00:00 UTC (19:00 Colombia)
+
+# ─── Environment Variables (non-secret) ──────────────────────
+[vars]
+APP_ENV = "production"
+
+# ─── Secrets (set via CLI, NOT here) ─────────────────────────
+# Run these commands after first deploy:
+#   wrangler secret put AUTH_SECRET
+#   wrangler secret put CRON_SECRET
