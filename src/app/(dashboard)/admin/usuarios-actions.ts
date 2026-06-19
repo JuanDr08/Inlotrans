@@ -1,7 +1,8 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase/admin'
+import { getD1, generateId } from '@/lib/d1/client'
 import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { hashPassword } from '@/lib/auth/password'
 import { revalidatePath } from 'next/cache'
 
 export type PerfilConEmail = {
@@ -17,46 +18,46 @@ export async function listarUsuarios(): Promise<{ success: boolean; data?: Perfi
     const profile = await getUserProfile()
     requireAdmin(profile)
 
-    const adminClient = createAdminClient()
+    const db = getD1()
 
-    const { data: perfiles, error } = await adminClient
-        .from('perfiles')
-        .select('*')
-        .order('created_at', { ascending: true })
-
-    if (error) {
-        return { success: false, error: 'Error obteniendo perfiles: ' + error.message }
+    interface PerfilRow {
+        id: string
+        rol: string
+        operacion_nombre: string | null
+        created_at: string
+        email: string
+        banned_until: string | null
     }
 
-    // Obtener emails desde auth.users via admin client
-    const { data: { users }, error: usersError } = await adminClient.auth.admin.listUsers()
+    const { results } = await db
+        .prepare(`
+            SELECT p.id, p.rol, p.operacion_nombre, p.created_at,
+                   u.email, u.banned_until
+            FROM perfiles p
+            JOIN auth_users u ON u.id = p.id
+            ORDER BY p.created_at ASC
+        `)
+        .all()
 
-    if (usersError) {
-        return { success: false, error: 'Error obteniendo usuarios auth: ' + usersError.message }
-    }
+    const rows = (results ?? []) as unknown as PerfilRow[]
 
-    const usersMap = new Map(users.map(u => [u.id, u]))
+    const data: PerfilConEmail[] = rows.map(r => ({
+        id: r.id,
+        email: r.email,
+        rol: r.rol,
+        operacion_nombre: r.operacion_nombre,
+        created_at: r.created_at,
+        banned: r.banned_until ? new Date(r.banned_until) > new Date() : false,
+    }))
 
-    const resultado: PerfilConEmail[] = (perfiles || []).map(p => {
-        const authUser = usersMap.get(p.id)
-        return {
-            id: p.id,
-            email: authUser?.email || 'Sin email',
-            rol: p.rol,
-            operacion_nombre: p.operacion_nombre,
-            created_at: p.created_at,
-            banned: !!authUser?.banned_until
-        }
-    })
-
-    return { success: true, data: resultado }
+    return { success: true, data }
 }
 
 export async function crearUsuarioAuth({
     email,
     password,
     rol,
-    operacion_nombre
+    operacion_nombre,
 }: {
     email: string
     password: string
@@ -78,39 +79,31 @@ export async function crearUsuarioAuth({
         return { success: false, error: 'Un coordinador debe tener una operación asignada' }
     }
 
-    const adminClient = createAdminClient()
+    const db = getD1()
 
-    // Crear usuario en auth
-    const { data: newUser, error: authError } = await adminClient.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true
-    })
+    const existing = await db
+        .prepare('SELECT id FROM auth_users WHERE email = ?')
+        .bind(email.toLowerCase())
+        .first()
 
-    if (authError) {
-        if (authError.message?.includes('already been registered')) {
-            return { success: false, error: 'Ya existe un usuario con ese email' }
-        }
-        return { success: false, error: 'Error creando usuario auth: ' + authError.message }
+    if (existing) {
+        return { success: false, error: 'Ya existe un usuario con ese email' }
     }
 
-    if (!newUser.user) {
-        return { success: false, error: 'No se pudo crear el usuario' }
-    }
+    const id = generateId()
+    const passwordHash = await hashPassword(password)
 
-    // Crear perfil
-    const { error: perfilError } = await adminClient
-        .from('perfiles')
-        .insert({
-            id: newUser.user.id,
-            rol,
-            operacion_nombre: rol === 'admin' ? null : operacion_nombre
-        })
+    const stmts = [
+        db.prepare('INSERT INTO auth_users (id, email, password_hash) VALUES (?, ?, ?)')
+            .bind(id, email.toLowerCase(), passwordHash),
+        db.prepare('INSERT INTO perfiles (id, rol, operacion_nombre) VALUES (?, ?, ?)')
+            .bind(id, rol, rol === 'admin' ? null : operacion_nombre),
+    ]
 
-    if (perfilError) {
-        // Rollback: eliminar usuario auth si falla el perfil
-        await adminClient.auth.admin.deleteUser(newUser.user.id)
-        return { success: false, error: 'Error creando perfil: ' + perfilError.message }
+    try {
+        await db.batch(stmts)
+    } catch (err) {
+        return { success: false, error: 'Error creando usuario: ' + (err instanceof Error ? err.message : 'desconocido') }
     }
 
     revalidatePath('/admin/usuarios')
@@ -120,7 +113,7 @@ export async function crearUsuarioAuth({
 export async function editarPerfil({
     id,
     rol,
-    operacion_nombre
+    operacion_nombre,
 }: {
     id: string
     rol: 'admin' | 'coordinador'
@@ -133,19 +126,11 @@ export async function editarPerfil({
         return { success: false, error: 'Un coordinador debe tener una operación asignada' }
     }
 
-    const adminClient = createAdminClient()
-
-    const { error } = await adminClient
-        .from('perfiles')
-        .update({
-            rol,
-            operacion_nombre: rol === 'admin' ? null : operacion_nombre
-        })
-        .eq('id', id)
-
-    if (error) {
-        return { success: false, error: 'Error actualizando perfil: ' + error.message }
-    }
+    const db = getD1()
+    await db
+        .prepare('UPDATE perfiles SET rol = ?, operacion_nombre = ? WHERE id = ?')
+        .bind(rol, rol === 'admin' ? null : operacion_nombre, id)
+        .run()
 
     revalidatePath('/admin/usuarios')
     return { success: true }
@@ -155,28 +140,27 @@ export async function toggleBanUsuario(id: string): Promise<{ success: boolean; 
     const profile = await getUserProfile()
     requireAdmin(profile)
 
-    // No permitir auto-ban
     if (profile.userId === id) {
         return { success: false, error: 'No puedes desactivar tu propia cuenta' }
     }
 
-    const adminClient = createAdminClient()
+    const db = getD1()
+    const user = await db
+        .prepare('SELECT banned_until FROM auth_users WHERE id = ?')
+        .bind(id)
+        .first<{ banned_until: string | null }>()
 
-    // Verificar estado actual
-    const { data: { user }, error: getUserError } = await adminClient.auth.admin.getUserById(id)
-
-    if (getUserError || !user) {
+    if (!user) {
         return { success: false, error: 'Usuario no encontrado' }
     }
 
-    const isBanned = !!user.banned_until
-    const { error } = await adminClient.auth.admin.updateUserById(id, {
-        ban_duration: isBanned ? 'none' : '87600h' // 10 anios = efectivamente permanente
-    })
+    const isBanned = user.banned_until ? new Date(user.banned_until) > new Date() : false
+    const newBanUntil = isBanned ? null : new Date(Date.now() + 10 * 365.25 * 24 * 60 * 60 * 1000).toISOString()
 
-    if (error) {
-        return { success: false, error: 'Error actualizando estado: ' + error.message }
-    }
+    await db
+        .prepare('UPDATE auth_users SET banned_until = ? WHERE id = ?')
+        .bind(newBanUntil, id)
+        .run()
 
     revalidatePath('/admin/usuarios')
     return { success: true }

@@ -1,4 +1,7 @@
-import { createClient } from '@/lib/supabase/server'
+'use server'
+
+import { getSessionCookie, verifySession } from '@/lib/auth/session'
+import { getD1 } from '@/lib/d1/client'
 
 export type Rol = 'admin' | 'coordinador'
 
@@ -9,55 +12,44 @@ export type UserProfile = {
     operacion_nombre: string | null
 }
 
-/**
- * Obtiene el perfil del usuario autenticado actual.
- * Retorna null si no hay sesion o si el usuario no tiene perfil en `perfiles`.
- */
 export async function getUserProfile(): Promise<UserProfile | null> {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+    const token = await getSessionCookie()
+    if (!token) return null
 
-    if (!user) return null
+    const secret = process.env.AUTH_SECRET
+    if (!secret) return null
 
-    const { data: perfil } = await supabase
-        .from('perfiles')
-        .select('rol, operacion_nombre')
-        .eq('id', user.id)
-        .single()
+    const session = await verifySession(token, secret)
+    if (!session) return null
+
+    const db = getD1()
+    const perfil = await db
+        .prepare('SELECT rol, operacion_nombre FROM perfiles WHERE id = ?')
+        .bind(session.userId)
+        .first<{ rol: string; operacion_nombre: string | null }>()
 
     if (!perfil) return null
 
     return {
-        userId: user.id,
-        email: user.email!,
+        userId: session.userId,
+        email: session.email,
         rol: perfil.rol as Rol,
-        operacion_nombre: perfil.operacion_nombre
+        operacion_nombre: perfil.operacion_nombre,
     }
 }
 
-/**
- * Assertion: requiere que el perfil sea admin. Lanza error si no.
- */
 export function requireAdmin(profile: UserProfile | null): asserts profile is UserProfile {
     if (!profile || profile.rol !== 'admin') {
         throw new Error('No autorizado: se requiere rol de administrador')
     }
 }
 
-/**
- * Assertion: requiere que el perfil sea admin o coordinador. Lanza error si no.
- */
 export function requireAdminOrCoordinador(profile: UserProfile | null): asserts profile is UserProfile {
     if (!profile || !['admin', 'coordinador'].includes(profile.rol)) {
         throw new Error('No autorizado: se requiere rol de administrador o coordinador')
     }
 }
 
-/**
- * Retorna el filtro de operaciones para queries.
- * Admin: array vacio (sin filtro, ve todo).
- * Coordinador: [operacion_nombre] (filtro obligatorio).
- */
 export function getOperationFilter(profile: UserProfile): string[] {
     if (profile.rol === 'admin') return []
     return profile.operacion_nombre ? [profile.operacion_nombre] : []

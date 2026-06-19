@@ -1,89 +1,60 @@
-import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+/**
+ * Session middleware — replaces Supabase GoTrue session management.
+ * Validates JWT from cookie, enforces RBAC on dashboard routes.
+ *
+ * NOTE: This middleware cannot access D1 directly (edge runtime limitation
+ * with some adapters). It validates the JWT signature only. The perfiles
+ * lookup for RBAC is done via a lightweight fetch to an internal endpoint
+ * or skipped in favor of app-level checks in Server Components/Actions.
+ *
+ * For now, the middleware only validates authentication (is the JWT valid?).
+ * Role-based route gating is handled by Server Components that call getUserProfile().
+ */
 
-// Rutas que solo admin puede acceder
+import { NextResponse, type NextRequest } from 'next/server'
+import { verifySession, getSessionFromRequest, SESSION_COOKIE } from '@/lib/auth/session'
+
 const ADMIN_ONLY_ROUTES = ['/admin/operaciones', '/admin/usuarios']
 
-// Rutas del dashboard (requieren perfil admin o coordinador)
 function isDashboardRoute(pathname: string): boolean {
     return pathname.startsWith('/empleados')
         || pathname.startsWith('/novedades')
         || pathname.startsWith('/admin')
+        || pathname.startsWith('/aprobaciones')
 }
 
 export async function updateSession(request: NextRequest) {
-    let supabaseResponse = NextResponse.next({
-        request,
-    })
-
-    const supabase = createServerClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-        {
-            cookies: {
-                getAll() {
-                    return request.cookies.getAll()
-                },
-                setAll(cookiesToSet) {
-                    cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-                    supabaseResponse = NextResponse.next({
-                        request,
-                    })
-                    cookiesToSet.forEach(({ name, value, options }) =>
-                        supabaseResponse.cookies.set(name, value, options)
-                    )
-                },
-            },
-        }
-    )
-
-    const {
-        data: { user },
-    } = await supabase.auth.getUser()
-
     const pathname = request.nextUrl.pathname
     const isAuthRoute = pathname.startsWith('/login')
     const isCronRoute = pathname.startsWith('/api/cron')
+    const isApiReportes = pathname.startsWith('/api/reportes')
 
-    // No autenticado: redirigir a login (excepto login y cron)
-    if (!user && !isAuthRoute && !isCronRoute) {
+    // Cron and report routes handle their own auth
+    if (isCronRoute || isApiReportes) {
+        return NextResponse.next()
+    }
+
+    const token = getSessionFromRequest(request)
+    const secret = process.env.AUTH_SECRET
+
+    let session = null
+    if (token && secret) {
+        session = await verifySession(token, secret)
+    }
+
+    // Not authenticated: redirect to login (except login page itself)
+    if (!session && !isAuthRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/login'
         return NextResponse.redirect(url)
     }
 
-    // Autenticado intentando acceder a login: redirigir al kiosco
-    if (user && isAuthRoute) {
+    // Authenticated trying to access login: redirect to kiosk
+    if (session && isAuthRoute) {
         const url = request.nextUrl.clone()
         url.pathname = '/'
         return NextResponse.redirect(url)
     }
 
-    // Gate por roles para rutas del dashboard
-    if (user && isDashboardRoute(pathname)) {
-        const { data: perfil } = await supabase
-            .from('perfiles')
-            .select('rol')
-            .eq('id', user.id)
-            .single()
-
-        // Sin perfil = trabajador o cuenta sin vincular -> solo kiosco
-        if (!perfil) {
-            const url = request.nextUrl.clone()
-            url.pathname = '/'
-            return NextResponse.redirect(url)
-        }
-
-        // Coordinador no puede acceder a rutas admin-only
-        if (perfil.rol === 'coordinador') {
-            const isAdminOnly = ADMIN_ONLY_ROUTES.some(route => pathname.startsWith(route))
-            if (isAdminOnly) {
-                const url = request.nextUrl.clone()
-                url.pathname = '/admin'
-                return NextResponse.redirect(url)
-            }
-        }
-    }
-
-    return supabaseResponse
+    return NextResponse.next()
 }
