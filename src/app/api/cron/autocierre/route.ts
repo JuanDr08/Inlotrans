@@ -17,38 +17,43 @@ export async function GET(request: NextRequest) {
 
         const db = getD1()
         const ahora = new Date()
+        const umbralISO = new Date(ahora.getTime() - UMBRAL_INCONSISTENTE_HORAS * 60 * 60 * 1000).toISOString()
 
-        // ─── 1. Detectar jornadas INCONSISTENTES ─────────────────
-        const umbralMs = UMBRAL_INCONSISTENTE_HORAS * 60 * 60 * 1000
-
+        // ─── 1. Detectar y marcar jornadas INCONSISTENTES (batch) ──
         const { results: jornadasAbiertas } = await db
-            .prepare("SELECT id, empleado_id, operacion, entrada FROM jornadas WHERE estado = 'ABIERTO'")
+            .prepare(
+                `SELECT id, empleado_id, operacion FROM jornadas
+                 WHERE estado = 'ABIERTO' AND entrada < ?`,
+            )
+            .bind(umbralISO)
             .all()
 
         const inconsistentes: string[] = []
 
-        for (const j of jornadasAbiertas ?? []) {
-            const transcurridoMs = ahora.getTime() - new Date(j.entrada as string).getTime()
-            if (transcurridoMs < umbralMs) continue
+        if (jornadasAbiertas && jornadasAbiertas.length > 0) {
+            const stmts = []
+            for (const j of jornadasAbiertas) {
+                const jId = j.id as string
+                inconsistentes.push(jId)
 
-            await db
-                .prepare("UPDATE jornadas SET estado = 'INCONSISTENTE' WHERE id = ?")
-                .bind(j.id)
-                .run()
-
-            await db
-                .prepare("INSERT INTO alertas (id, tipo, empleado_id, jornada_id, operacion, mensaje) VALUES (?, ?, ?, ?, ?, ?)")
-                .bind(
-                    generateId(),
-                    'INCONSISTENTE',
-                    j.empleado_id,
-                    j.id,
-                    j.operacion,
-                    `Jornada abierta por más de ${UMBRAL_INCONSISTENTE_HORAS}h sin salida registrada.`,
+                stmts.push(
+                    db.prepare("UPDATE jornadas SET estado = 'INCONSISTENTE' WHERE id = ?")
+                        .bind(jId),
                 )
-                .run()
-
-            inconsistentes.push(j.id as string)
+                stmts.push(
+                    db.prepare(
+                        "INSERT INTO alertas (id, tipo, empleado_id, jornada_id, operacion, mensaje) VALUES (?, ?, ?, ?, ?, ?)",
+                    ).bind(
+                        generateId(),
+                        'INCONSISTENTE',
+                        j.empleado_id,
+                        jId,
+                        j.operacion,
+                        `Jornada abierta por más de ${UMBRAL_INCONSISTENTE_HORAS}h sin salida registrada.`,
+                    ),
+                )
+            }
+            await db.batch(stmts)
         }
 
         // ─── 2. Cierre dominical (si ayer fue domingo en Colombia) ─
@@ -75,75 +80,86 @@ export async function GET(request: NextRequest) {
                 domingo.getTime() + 24 * 60 * 60 * 1000 + 5 * 60 * 60 * 1000,
             )
 
+            // Aggregated query: sum ordinary minutes per employee in one shot
+            interface MinutosAgregados { empleado_id: string; total_ordinarios: number }
+            const { results: minutosAgg } = await db
+                .prepare(
+                    `SELECT empleado_id,
+                            SUM(COALESCE(minutos_normales, 0) + COALESCE(minutos_nocturnas, 0) +
+                                COALESCE(minutos_domingos, 0) + COALESCE(minutos_festivos, 0) +
+                                COALESCE(minutos_domingos_festivos_nocturnos, 0)) as total_ordinarios
+                     FROM jornadas
+                     WHERE estado IN ('CERRADO', 'CERRADO_MANUAL')
+                       AND entrada >= ? AND entrada < ?
+                     GROUP BY empleado_id`,
+                )
+                .bind(inicioUTC.toISOString(), finUTC.toISOString())
+                .all()
+
+            const minutosMap = new Map<string, number>()
+            for (const row of (minutosAgg ?? []) as unknown as MinutosAgregados[]) {
+                minutosMap.set(row.empleado_id, row.total_ordinarios)
+            }
+
+            // Aggregated query: paid novedades that intersect the week
+            interface NovedadRow {
+                usuario_id: string
+                fecha_novedad: string | null
+                fecha_inicio: string | null
+                fecha_fin: string | null
+            }
+            const { results: novedadesRaw } = await db
+                .prepare(
+                    `SELECT usuario_id, fecha_novedad, fecha_inicio, fecha_fin
+                     FROM novedades
+                     WHERE es_pagado = 1
+                       AND ((fecha_novedad >= ? AND fecha_novedad <= ?)
+                            OR (fecha_inicio <= ? AND fecha_fin >= ?))`,
+                )
+                .bind(semanaInicio, semanaFin, semanaFin, semanaInicio)
+                .all()
+
+            const novedadesMap = new Map<string, number>()
+            for (const nov of (novedadesRaw ?? []) as unknown as NovedadRow[]) {
+                let minutosNov = 0
+                if (nov.fecha_inicio && nov.fecha_fin) {
+                    const ini = new Date(
+                        Math.max(new Date(nov.fecha_inicio).getTime(), lunes.getTime()),
+                    )
+                    const fin = new Date(
+                        Math.min(new Date(nov.fecha_fin).getTime(), domingo.getTime()),
+                    )
+                    if (fin.getTime() >= ini.getTime()) {
+                        const dias = Math.floor((fin.getTime() - ini.getTime()) / 86400000) + 1
+                        minutosNov = Math.max(0, dias) * 480
+                    }
+                } else if (nov.fecha_novedad) {
+                    const f = new Date(nov.fecha_novedad)
+                    if (f.getTime() >= lunes.getTime() && f.getTime() <= domingo.getTime()) {
+                        minutosNov = 480
+                    }
+                }
+
+                if (minutosNov > 0) {
+                    const prev = novedadesMap.get(nov.usuario_id) ?? 0
+                    novedadesMap.set(nov.usuario_id, prev + minutosNov)
+                }
+            }
+
+            // All active employees
             const { results: empleados } = await db
                 .prepare("SELECT id FROM usuarios WHERE status = 'activo'")
                 .all()
 
-            let procesados = 0
+            // Build upsert batch
+            const upsertStmts = []
+            for (const emp of (empleados ?? []) as { id: string }[]) {
+                const minutosOrdinarios = minutosMap.get(emp.id) ?? 0
+                const minutosNovedades = novedadesMap.get(emp.id) ?? 0
+                const pagaDomingo = minutosOrdinarios + minutosNovedades >= MINUTOS_SEMANA_PACTADOS
 
-            for (const emp of empleados ?? []) {
-                const { results: jornadasSemana } = await db
-                    .prepare(
-                        `SELECT minutos_normales, minutos_nocturnas, minutos_domingos, minutos_festivos, minutos_domingos_festivos_nocturnos
-                         FROM jornadas
-                         WHERE empleado_id = ? AND estado IN ('CERRADO', 'CERRADO_MANUAL')
-                         AND entrada >= ? AND entrada < ?`,
-                    )
-                    .bind(emp.id, inicioUTC.toISOString(), finUTC.toISOString())
-                    .all()
-
-                const rows = (jornadasSemana ?? []) as Record<string, number>[]
-                const minutosOrdinarios = rows.reduce(
-                    (acc: number, j: Record<string, number>) =>
-                        acc +
-                        (j.minutos_normales ?? 0) +
-                        (j.minutos_nocturnas ?? 0) +
-                        (j.minutos_domingos ?? 0) +
-                        (j.minutos_festivos ?? 0) +
-                        (j.minutos_domingos_festivos_nocturnos ?? 0),
-                    0,
-                )
-
-                const { results: novedades } = await db
-                    .prepare(
-                        "SELECT fecha_novedad, fecha_inicio, fecha_fin FROM novedades WHERE usuario_id = ? AND es_pagado = 1",
-                    )
-                    .bind(emp.id)
-                    .all()
-
-                let minutosNovedades = 0
-                for (const nov of novedades ?? []) {
-                    if (nov.fecha_inicio && nov.fecha_fin) {
-                        const ini = new Date(
-                            Math.max(
-                                new Date(nov.fecha_inicio as string).getTime(),
-                                lunes.getTime(),
-                            ),
-                        )
-                        const fin = new Date(
-                            Math.min(
-                                new Date(nov.fecha_fin as string).getTime(),
-                                domingo.getTime(),
-                            ),
-                        )
-                        if (fin.getTime() >= ini.getTime()) {
-                            const dias =
-                                Math.floor((fin.getTime() - ini.getTime()) / 86400000) + 1
-                            minutosNovedades += Math.max(0, dias) * 480
-                        }
-                    } else if (nov.fecha_novedad) {
-                        const f = new Date(nov.fecha_novedad as string)
-                        if (f.getTime() >= lunes.getTime() && f.getTime() <= domingo.getTime()) {
-                            minutosNovedades += 480
-                        }
-                    }
-                }
-
-                const pagaDomingo =
-                    minutosOrdinarios + minutosNovedades >= MINUTOS_SEMANA_PACTADOS
-
-                await db
-                    .prepare(
+                upsertStmts.push(
+                    db.prepare(
                         `INSERT INTO semanas_dominicales (id, empleado_id, semana_inicio, semana_fin, minutos_ordinarios, minutos_novedades_remuneradas, paga_domingo, marcado_por)
                          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                          ON CONFLICT(empleado_id, semana_inicio) DO UPDATE SET
@@ -152,8 +168,7 @@ export async function GET(request: NextRequest) {
                          minutos_novedades_remuneradas = excluded.minutos_novedades_remuneradas,
                          paga_domingo = excluded.paga_domingo,
                          marcado_por = excluded.marcado_por`,
-                    )
-                    .bind(
+                    ).bind(
                         generateId(),
                         emp.id,
                         semanaInicio,
@@ -162,16 +177,18 @@ export async function GET(request: NextRequest) {
                         minutosNovedades,
                         pagaDomingo ? 1 : 0,
                         'sistema',
-                    )
-                    .run()
+                    ),
+                )
+            }
 
-                procesados++
+            if (upsertStmts.length > 0) {
+                await db.batch(upsertStmts)
             }
 
             resumenDominical = {
                 semana_inicio: semanaInicio,
                 semana_fin: semanaFin,
-                empleados_procesados: procesados,
+                empleados_procesados: empleados?.length ?? 0,
             }
         }
 
