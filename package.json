@@ -10,8 +10,6 @@
     "migrate:prod-to-dev": "tsx scripts/migrate-prod-to-dev.ts"
   },
   "dependencies": {
-    "@supabase/ssr": "^0.8.0",
-    "@supabase/supabase-js": "^2.97.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",

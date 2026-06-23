@@ -1,20 +1,5 @@
-/**
- * Session middleware — replaces Supabase GoTrue session management.
- * Validates JWT from cookie, enforces RBAC on dashboard routes.
- *
- * NOTE: This middleware cannot access D1 directly (edge runtime limitation
- * with some adapters). It validates the JWT signature only. The perfiles
- * lookup for RBAC is done via a lightweight fetch to an internal endpoint
- * or skipped in favor of app-level checks in Server Components/Actions.
- *
- * For now, the middleware only validates authentication (is the JWT valid?).
- * Role-based route gating is handled by Server Components that call getUserProfile().
- */
-
 import { NextResponse, type NextRequest } from 'next/server'
-import { verifySession, getSessionFromRequest, SESSION_COOKIE } from '@/lib/auth/session'
-
-const ADMIN_ONLY_ROUTES = ['/admin/operaciones', '/admin/usuarios']
+import { verifySession, getSessionFromRequest } from '@/lib/auth/session'
 
 function isDashboardRoute(pathname: string): boolean {
     return pathname.startsWith('/empleados')
