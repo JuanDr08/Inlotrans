@@ -1,21 +1,7 @@
-import { getD1 } from '@/lib/d1/client'
+import { getD1, getKV } from '@/lib/d1/client'
 
-// ==================================================
-// CACHÉ DE DÍAS FESTIVOS (24h TTL por año)
-// ==================================================
-interface CacheFestivo {
-    fechas: Date[]
-    timestamp: number
-}
-const cacheDiasFestivos: Record<number, CacheFestivo> = {}
-const CACHE_FESTIVOS_DURACION = 24 * 60 * 60 * 1000
-
-// ==================================================
-// CACHÉ DE TARIFAS (5 min TTL)
-// ==================================================
-let cacheTarifas: Record<string, number> | null = null
-let cacheTarifasTimestamp: number | null = null
-const CACHE_TARIFAS_DURACION = 5 * 60 * 1000
+const KV_FESTIVOS_TTL = 86400 // 24h in seconds
+const KV_TARIFAS_TTL = 300    // 5 min in seconds
 
 // ==================================================
 // TIPOS PÚBLICOS
@@ -102,9 +88,12 @@ export function esDomingoOFestivo(
 // FESTIVOS (API Colombia + fallback caché)
 // ==================================================
 export async function obtenerDiasFestivos(año: number): Promise<Date[]> {
-    const cached = cacheDiasFestivos[año]
-    if (cached && Date.now() - cached.timestamp < CACHE_FESTIVOS_DURACION) {
-        return cached.fechas
+    const kv = getKV()
+    const kvKey = `festivos:${año}`
+
+    const cached = await kv.get(kvKey)
+    if (cached) {
+        return (JSON.parse(cached) as string[]).map((iso: string) => new Date(iso))
     }
 
     try {
@@ -115,11 +104,12 @@ export async function obtenerDiasFestivos(año: number): Promise<Date[]> {
             const d = new Date(f.date)
             return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
         })
-        cacheDiasFestivos[año] = { fechas, timestamp: Date.now() }
+        const isoStrings = fechas.map((f: Date) => f.toISOString())
+        await kv.put(kvKey, JSON.stringify(isoStrings), { expirationTtl: KV_FESTIVOS_TTL })
         return fechas
     } catch (error) {
         console.error(`Error al obtener festivos para ${año}:`, error)
-        return cacheDiasFestivos[año]?.fechas ?? []
+        return []
     }
 }
 
@@ -142,10 +132,11 @@ export async function obtenerFestivosParaRango(entrada: Date, salida: Date): Pro
 // TARIFAS (tabla `tarifas` + caché + fallback hardcodeado 2026)
 // ==================================================
 export async function obtenerTarifas(): Promise<Record<string, number>> {
-    if (cacheTarifas && cacheTarifasTimestamp) {
-        const elapsed = Date.now() - cacheTarifasTimestamp
-        if (elapsed < CACHE_TARIFAS_DURACION) return cacheTarifas
-    }
+    const kv = getKV()
+    const kvKey = 'tarifas:activas'
+
+    const cached = await kv.get(kvKey)
+    if (cached) return JSON.parse(cached) as Record<string, number>
 
     try {
         const db = getD1()
@@ -158,8 +149,7 @@ export async function obtenerTarifas(): Promise<Record<string, number>> {
             tarifas[row.tipo_hora] = Number(row.precio_por_hora)
         })
 
-        cacheTarifas = tarifas
-        cacheTarifasTimestamp = Date.now()
+        await kv.put(kvKey, JSON.stringify(tarifas), { expirationTtl: KV_TARIFAS_TTL })
         return tarifas
     } catch (error) {
         console.error('Error al obtener tarifas, usando fallback:', error)
