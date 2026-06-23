@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
     Table,
@@ -20,17 +20,17 @@ export default async function NovedadesPage() {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
 
-    const supabase = await createClient()
+    const db = getD1()
 
-    const { data: novedadesRaw } = await supabase
-        .from('novedades')
-        .select(`
-            id, usuario_id, usuario_nombre, tipo_novedad,
-            fecha_novedad, fecha_inicio, fecha_fin,
-            es_pagado, codigo_causa, valor_monetario, descripcion, created_at,
-            usuario:usuarios(nombre, operacion)
-        `)
-        .order('fecha_novedad', { ascending: false })
+    const { results: novedadesRaw } = await db.prepare(
+        `SELECT n.id, n.usuario_id, n.usuario_nombre, n.tipo_novedad,
+                n.fecha_novedad, n.fecha_inicio, n.fecha_fin,
+                n.es_pagado, n.codigo_causa, n.valor_monetario, n.descripcion, n.created_at,
+                u.nombre as usuario_real_nombre, u.operacion as usuario_operacion
+         FROM novedades n
+         LEFT JOIN usuarios u ON u.id = n.usuario_id
+         ORDER BY n.fecha_novedad DESC`
+    ).all()
 
     type NovedadRow = {
         id: string
@@ -40,17 +40,37 @@ export default async function NovedadesPage() {
         fecha_novedad: string
         fecha_inicio: string | null
         fecha_fin: string | null
-        es_pagado: boolean
+        es_pagado: number
         codigo_causa: number | null
         valor_monetario: number | null
         descripcion: string | null
-        usuario?: { nombre?: string; operacion?: string } | { nombre?: string; operacion?: string }[]
+        usuario_real_nombre: string | null
+        usuario_operacion: string | null
     }
-    let novedades = (novedadesRaw ?? []) as NovedadRow[]
+
+    const rawRows = (novedadesRaw ?? []) as unknown as NovedadRow[]
+
+    const mapped = rawRows.map(r => ({
+        id: r.id,
+        usuario_id: r.usuario_id,
+        usuario_nombre: r.usuario_nombre,
+        tipo_novedad: r.tipo_novedad,
+        fecha_novedad: r.fecha_novedad,
+        fecha_inicio: r.fecha_inicio,
+        fecha_fin: r.fecha_fin,
+        es_pagado: !!r.es_pagado,
+        codigo_causa: r.codigo_causa,
+        valor_monetario: r.valor_monetario,
+        descripcion: r.descripcion,
+        usuario: r.usuario_real_nombre
+            ? { nombre: r.usuario_real_nombre, operacion: r.usuario_operacion ?? undefined }
+            : undefined,
+    }))
+
+    let novedades = mapped
     if (profile.rol === 'coordinador') {
         novedades = novedades.filter((n) => {
-            const usuario = Array.isArray(n.usuario) ? n.usuario[0] : n.usuario
-            return usuario?.operacion === profile.operacion_nombre
+            return n.usuario?.operacion === profile.operacion_nombre
         })
     }
 
@@ -100,7 +120,7 @@ export default async function NovedadesPage() {
                                             </TableRow>
                                         )}
                                         {novedades?.map((nov) => {
-                                            const usuarioRel = Array.isArray(nov.usuario) ? nov.usuario[0] : nov.usuario
+                                            const usuarioRel = nov.usuario
                                             return (
                                             <TableRow key={nov.id}>
                                                 <TableCell>

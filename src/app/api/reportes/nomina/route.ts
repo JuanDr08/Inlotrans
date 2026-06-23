@@ -1,7 +1,7 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { toColombiaTime } from '@/lib/calculoHoras'
 import { generarExcelNomina, type LineaNomina, type TarifaConCodigo } from '@/lib/excel/nomina'
+import { getD1 } from '@/lib/d1/client'
 
 function minToRoundedHours(min: number): number {
     if (min <= 0) return 0
@@ -44,15 +44,8 @@ function horaEnteraColombia(fechaUTC: Date): number {
 
 export async function GET(request: NextRequest) {
     try {
-        // Auth
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-        if (!supabaseUrl || !supabaseServiceKey) {
-            return NextResponse.json({ error: 'Config error' }, { status: 500 })
-        }
-        const supabase = createClient(supabaseUrl, supabaseServiceKey)
+        const db = getD1()
 
-        // Query params
         const { searchParams } = new URL(request.url)
         const startParam = searchParams.get('start')
         const endParam = searchParams.get('end')
@@ -62,53 +55,53 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Faltan parámetros start y end.' }, { status: 400 })
         }
 
-        // Convertir rango a UTC: start 00:00 Colombia = 05:00 UTC, end 23:59 Colombia = +1 day 04:59 UTC
         const startUTC = new Date(`${startParam}T05:00:00Z`)
         const endUTC = new Date(`${endParam}T05:00:00Z`)
         endUTC.setUTCDate(endUTC.getUTCDate() + 1)
 
         const operaciones = opParam ? opParam.split(',').filter(Boolean) : []
 
-        // ─── 1. Jornadas + usuarios (sin join a operaciones — no hay FK) ──
-        let jornadaQuery = supabase
-            .from('jornadas')
-            .select(`
-                id, empleado_id, operacion, entrada, salida,
-                minutos_total, minutos_normales, minutos_nocturnas,
-                minutos_extras_ordinarias, minutos_extras_nocturnas,
-                minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo,
-                minutos_domingos, minutos_festivos, minutos_domingos_festivos_nocturnos,
-                minutos_almuerzo_descontados,
-                usuarios!inner ( id, nombre, cargo )
-            `)
-            .in('estado', ['CERRADO', 'CERRADO_MANUAL'])
-            .gte('entrada', startUTC.toISOString())
-            .lt('entrada', endUTC.toISOString())
-            .order('entrada', { ascending: true })
+        // ─── 1. Jornadas + usuarios ──────────────────────────────
+        let jornadaSql = `
+            SELECT j.id, j.empleado_id, j.operacion, j.entrada, j.salida,
+                   j.minutos_total, j.minutos_normales, j.minutos_nocturnas,
+                   j.minutos_extras_ordinarias, j.minutos_extras_nocturnas,
+                   j.minutos_extras_dominical_festivo, j.minutos_extras_nocturna_dominical_festivo,
+                   j.minutos_domingos, j.minutos_festivos, j.minutos_domingos_festivos_nocturnos,
+                   j.minutos_almuerzo_descontados,
+                   u.id AS usuario_id_join, u.nombre AS usuario_nombre, u.cargo AS usuario_cargo
+            FROM jornadas j
+            INNER JOIN usuarios u ON u.id = j.empleado_id
+            WHERE j.estado IN ('CERRADO', 'CERRADO_MANUAL')
+            AND j.entrada >= ? AND j.entrada < ?`
+
+        const bindValues: unknown[] = [startUTC.toISOString(), endUTC.toISOString()]
 
         if (operaciones.length > 0) {
-            jornadaQuery = jornadaQuery.in('operacion', operaciones)
+            const placeholders = operaciones.map(() => '?').join(', ')
+            jornadaSql += ` AND j.operacion IN (${placeholders})`
+            bindValues.push(...operaciones)
         }
 
-        const { data: jornadas, error: errJornadas } = await jornadaQuery
-        if (errJornadas) {
-            return NextResponse.json({ error: errJornadas.message }, { status: 500 })
-        }
+        jornadaSql += ' ORDER BY j.entrada ASC'
 
-        // Lookup de operaciones por nombre → codigo (jornadas.operacion es TEXT, no FK)
-        const { data: opsData } = await supabase.from('operaciones').select('nombre, codigo')
+        const { results: jornadas } = await db.prepare(jornadaSql).bind(...bindValues).all()
+
+        const { results: opsData } = await db.prepare('SELECT nombre, codigo FROM operaciones').all()
         const opCodigoMap = new Map<string, string>()
-        for (const op of opsData ?? []) opCodigoMap.set(op.nombre, op.codigo)
+        for (const op of opsData ?? []) opCodigoMap.set(op.nombre as string, op.codigo as string)
 
         // ─── 2. Novedades en el rango ───────────────────────────
-        const { data: novedades } = await supabase
-            .from('novedades')
-            .select('usuario_id, tipo_novedad, descripcion, fecha_novedad, fecha_inicio, fecha_fin')
-            .or(
-                `and(fecha_novedad.gte.${startParam},fecha_novedad.lte.${endParam}),and(fecha_inicio.lte.${endParam},fecha_fin.gte.${startParam})`,
+        const { results: novedades } = await db
+            .prepare(
+                `SELECT usuario_id, tipo_novedad, descripcion, fecha_novedad, fecha_inicio, fecha_fin
+                 FROM novedades
+                 WHERE (fecha_novedad >= ? AND fecha_novedad <= ?)
+                    OR (fecha_inicio <= ? AND fecha_fin >= ?)`,
             )
+            .bind(startParam, endParam, endParam, startParam)
+            .all()
 
-        // Index novedades por (usuario_id + fecha) para lookup rápido
         type NovedadLookup = { tipo: string; detalle: string }
         const novedadIndex = new Map<string, NovedadLookup[]>()
 
@@ -117,14 +110,14 @@ export async function GET(request: NextRequest) {
                 const key = `${n.usuario_id}::${fecha}`
                 if (!novedadIndex.has(key)) novedadIndex.set(key, [])
                 novedadIndex.get(key)!.push({
-                    tipo: n.tipo_novedad,
-                    detalle: n.descripcion ?? '',
+                    tipo: n.tipo_novedad as string,
+                    detalle: (n.descripcion as string) ?? '',
                 })
             }
 
             if (n.fecha_inicio && n.fecha_fin) {
-                const ini = new Date(n.fecha_inicio)
-                const fin = new Date(n.fecha_fin)
+                const ini = new Date(n.fecha_inicio as string)
+                const fin = new Date(n.fecha_fin as string)
                 const d = new Date(ini)
                 while (d <= fin) {
                     const iso = d.toISOString().slice(0, 10)
@@ -132,20 +125,19 @@ export async function GET(request: NextRequest) {
                     d.setDate(d.getDate() + 1)
                 }
             } else if (n.fecha_novedad) {
-                addForDate(n.fecha_novedad)
+                addForDate(n.fecha_novedad as string)
             }
         }
 
         // ─── 3. Tarifas con código de nómina ────────────────────
-        const { data: tarifas } = await supabase
-            .from('tarifas')
-            .select('tipo_hora, precio_por_hora, codigo_nomina')
-            .eq('activo', true)
+        const { results: tarifas } = await db
+            .prepare("SELECT tipo_hora, precio_por_hora, codigo_nomina FROM tarifas WHERE activo = 1")
+            .all()
 
-        const tarifasConCodigo: TarifaConCodigo[] = (tarifas ?? []).map((t) => ({
-            tipo_hora: t.tipo_hora,
-            precio_por_hora: parseFloat(t.precio_por_hora),
-            codigo_nomina: t.codigo_nomina,
+        const tarifasConCodigo: TarifaConCodigo[] = ((tarifas ?? []) as Record<string, unknown>[]).map((t: Record<string, unknown>) => ({
+            tipo_hora: t.tipo_hora as string,
+            precio_por_hora: parseFloat(t.precio_por_hora as string),
+            codigo_nomina: t.codigo_nomina as string,
         }))
 
         // ─── 4. Armar líneas ────────────────────────────────────
@@ -153,45 +145,43 @@ export async function GET(request: NextRequest) {
         const empleadosConJornada = new Set<string>()
 
         for (const j of jornadas ?? []) {
-            const r = j as Record<string, unknown>
-            const usuario = r.usuarios as { id: string; nombre: string; cargo: string } | null
+            const cedula = j.usuario_id_join as string
+            if (!cedula) continue
 
-            if (!usuario) continue
-
-            const opNombre = r.operacion as string
+            const opNombre = j.operacion as string
             const opCodigo = opCodigoMap.get(opNombre) ?? ''
 
-            const entradaDate = new Date(r.entrada as string)
-            const salidaDate = r.salida ? new Date(r.salida as string) : null
+            const entradaDate = new Date(j.entrada as string)
+            const salidaDate = j.salida ? new Date(j.salida as string) : null
             const fechaDia = fechaColombiaDia(entradaDate)
             const horaIn = horaEnteraColombia(entradaDate)
             const horaOut = salidaDate ? horaEnteraColombia(salidaDate) : 0
             const horas = horaOut >= horaIn ? horaOut - horaIn : (24 - horaIn) + horaOut
 
-            empleadosConJornada.add(`${usuario.id}::${fechaDia}`)
+            empleadosConJornada.add(`${cedula}::${fechaDia}`)
 
             const base: Omit<LineaNomina, 'novedad' | 'detalleNovedad'> = {
                 fecha: fechaColombiaLarga(entradaDate),
-                cargo: usuario.cargo ?? '',
-                cedula: usuario.id,
-                nombre: usuario.nombre,
+                cargo: (j.usuario_cargo as string) ?? '',
+                cedula,
+                nombre: j.usuario_nombre as string,
                 horaIn,
                 horaOut,
-                almuerzo: minToRoundedHours(r.minutos_almuerzo_descontados as number),
+                almuerzo: minToRoundedHours(j.minutos_almuerzo_descontados as number),
                 horas,
-                extraDiurna: minToRoundedHours(r.minutos_extras_ordinarias as number),
-                extraNocturna: minToRoundedHours(r.minutos_extras_nocturnas as number),
-                extraFestivaDiurna: minToRoundedHours(r.minutos_extras_dominical_festivo as number),
-                extraFestivaNocturna: minToRoundedHours(r.minutos_extras_nocturna_dominical_festivo as number),
-                recargoNocturno: minToRoundedHours(r.minutos_nocturnas as number),
-                recargoFestivoNocturno: minToRoundedHours(r.minutos_domingos_festivos_nocturnos as number),
-                recargoFestivo: minToRoundedHours((r.minutos_festivos as number) + (r.minutos_domingos as number)),
+                extraDiurna: minToRoundedHours(j.minutos_extras_ordinarias as number),
+                extraNocturna: minToRoundedHours(j.minutos_extras_nocturnas as number),
+                extraFestivaDiurna: minToRoundedHours(j.minutos_extras_dominical_festivo as number),
+                extraFestivaNocturna: minToRoundedHours(j.minutos_extras_nocturna_dominical_festivo as number),
+                recargoNocturno: minToRoundedHours(j.minutos_nocturnas as number),
+                recargoFestivoNocturno: minToRoundedHours(j.minutos_domingos_festivos_nocturnos as number),
+                recargoFestivo: minToRoundedHours((j.minutos_festivos as number) + (j.minutos_domingos as number)),
                 operacion: opNombre,
                 codigoOperacion: opCodigo,
                 detalleOperacion: '',
             }
 
-            const novedadesDelDia = novedadIndex.get(`${usuario.id}::${fechaDia}`)
+            const novedadesDelDia = novedadIndex.get(`${cedula}::${fechaDia}`)
 
             if (novedadesDelDia && novedadesDelDia.length > 0) {
                 for (const nov of novedadesDelDia) {
@@ -207,22 +197,20 @@ export async function GET(request: NextRequest) {
             if (empleadosConJornada.has(key)) continue
 
             const [cedula, fecha] = key.split('::')
-            const { data: usuario } = await supabase
-                .from('usuarios')
-                .select('id, nombre, cargo, operacion')
-                .eq('id', cedula)
-                .maybeSingle()
+            const usuario = await db
+                .prepare('SELECT id, nombre, cargo, operacion FROM usuarios WHERE id = ?')
+                .bind(cedula)
+                .first()
 
             if (!usuario) continue
 
             let opCodigo = ''
             if (usuario.operacion) {
-                const { data: op } = await supabase
-                    .from('operaciones')
-                    .select('codigo')
-                    .eq('nombre', usuario.operacion)
-                    .maybeSingle()
-                opCodigo = op?.codigo ?? ''
+                const op = await db
+                    .prepare('SELECT codigo FROM operaciones WHERE nombre = ?')
+                    .bind(usuario.operacion)
+                    .first()
+                opCodigo = (op?.codigo as string) ?? ''
             }
 
             const [y, m, d] = fecha.split('-').map(Number)
@@ -231,9 +219,9 @@ export async function GET(request: NextRequest) {
             for (const nov of novs) {
                 lineas.push({
                     fecha: fakeDateParts,
-                    cargo: usuario.cargo ?? '',
-                    cedula: usuario.id,
-                    nombre: usuario.nombre,
+                    cargo: (usuario.cargo as string) ?? '',
+                    cedula: usuario.id as string,
+                    nombre: usuario.nombre as string,
                     horaIn: 0,
                     horaOut: 0,
                     almuerzo: 0,
@@ -245,7 +233,7 @@ export async function GET(request: NextRequest) {
                     recargoNocturno: 0,
                     recargoFestivoNocturno: 0,
                     recargoFestivo: 0,
-                    operacion: usuario.operacion ?? '',
+                    operacion: (usuario.operacion as string) ?? '',
                     codigoOperacion: opCodigo,
                     detalleOperacion: '',
                     novedad: nov.tipo,
@@ -254,7 +242,6 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        // Ordenar por fecha y nombre
         lineas.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.nombre.localeCompare(b.nombre))
 
         // ─── 6. Generar Excel ───────────────────────────────────

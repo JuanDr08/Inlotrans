@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 import {
     calcularValorPorMinutos,
     horasAFormato,
@@ -128,25 +128,32 @@ export async function calcularHorasUsuarioEnPeriodo(
     fechaInicio: Date,
     fechaFin: Date,
 ): Promise<ResumenEmpleadoPeriodo | null> {
-    const supabase = await createClient()
+    const db = getD1()
 
-    const [{ data: usuario }, { data: jornadas }] = await Promise.all([
-        supabase.from('usuarios').select('id, nombre, operacion').eq('id', cedula).maybeSingle(),
-        supabase
-            .from('jornadas')
-            .select(
-                'empleado_id, operacion, minutos_normales, minutos_nocturnas, minutos_domingos, minutos_festivos, minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias, minutos_extras_nocturnas, minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo, minutos_total',
-            )
-            .eq('empleado_id', cedula)
-            .in('estado', ['CERRADO', 'CERRADO_MANUAL'])
-            .gte('entrada', fechaInicio.toISOString())
-            .lte('entrada', fechaFin.toISOString()),
+    const [usuario, jornadasResult] = await Promise.all([
+        db.prepare('SELECT id, nombre, operacion FROM usuarios WHERE id = ?')
+            .bind(cedula)
+            .first<{ id: string; nombre: string; operacion: string | null }>(),
+        db.prepare(
+            `SELECT empleado_id, operacion, minutos_normales, minutos_nocturnas, minutos_domingos,
+                    minutos_festivos, minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias,
+                    minutos_extras_nocturnas, minutos_extras_dominical_festivo,
+                    minutos_extras_nocturna_dominical_festivo, minutos_total
+             FROM jornadas
+             WHERE empleado_id = ?
+               AND estado IN ('CERRADO', 'CERRADO_MANUAL')
+               AND entrada >= ?
+               AND entrada <= ?`,
+        )
+            .bind(cedula, fechaInicio.toISOString(), fechaFin.toISOString())
+            .all(),
     ])
 
     if (!usuario) return null
 
-    const detalle = (jornadas ?? []).reduce<DetalleMinutos>(
-        (acc, j) => sumarJornada(acc, j as JornadaSnapshot),
+    const jornadas = jornadasResult.results as JornadaSnapshot[]
+    const detalle = jornadas.reduce<DetalleMinutos>(
+        (acc, j) => sumarJornada(acc, j),
         acumuladorVacio(),
     )
     const total = totalMinutos(detalle)
@@ -177,40 +184,47 @@ export async function calcularHorasTodosEnPeriodo(
     fechaFin: Date,
     operaciones: string[] = [],
 ): Promise<ResumenEmpleadoPeriodo[]> {
-    const supabase = await createClient()
+    const db = getD1()
 
-    let query = supabase
-        .from('jornadas')
-        .select(
-            'empleado_id, operacion, minutos_normales, minutos_nocturnas, minutos_domingos, minutos_festivos, minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias, minutos_extras_nocturnas, minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo, minutos_total, usuarios!inner(id, nombre)',
-        )
-        .in('estado', ['CERRADO', 'CERRADO_MANUAL'])
-        .gte('entrada', fechaInicio.toISOString())
-        .lte('entrada', fechaFin.toISOString())
+    // Build query with optional operaciones filter
+    let sql = `
+        SELECT j.empleado_id, j.operacion,
+               j.minutos_normales, j.minutos_nocturnas, j.minutos_domingos,
+               j.minutos_festivos, j.minutos_domingos_festivos_nocturnos,
+               j.minutos_extras_ordinarias, j.minutos_extras_nocturnas,
+               j.minutos_extras_dominical_festivo, j.minutos_extras_nocturna_dominical_festivo,
+               j.minutos_total, u.nombre AS usuario_nombre
+        FROM jornadas j
+        INNER JOIN usuarios u ON u.id = j.empleado_id
+        WHERE j.estado IN ('CERRADO', 'CERRADO_MANUAL')
+          AND j.entrada >= ?
+          AND j.entrada <= ?`
 
-    if (operaciones.length > 0) query = query.in('operacion', operaciones)
+    const params: unknown[] = [fechaInicio.toISOString(), fechaFin.toISOString()]
 
-    const { data, error } = await query
-    if (error) {
-        console.error('Error en calcularHorasTodosEnPeriodo:', error)
-        return []
+    if (operaciones.length > 0) {
+        const placeholders = operaciones.map(() => '?').join(', ')
+        sql += ` AND j.operacion IN (${placeholders})`
+        params.push(...operaciones)
     }
+
+    const { results } = await db.prepare(sql).bind(...params).all()
+    if (!results || results.length === 0) return []
 
     // Agrupar por empleado_id
     const acumuladorPorEmpleado = new Map<
         string,
         { detalle: DetalleMinutos; nombre: string; operacion: string }
     >()
-    for (const row of data ?? []) {
-        const r = row as JornadaSnapshot & { usuarios?: { nombre?: string } | { nombre?: string }[] }
-        const usuarioObj = Array.isArray(r.usuarios) ? r.usuarios[0] : r.usuarios
+    for (const row of results) {
+        const r = row as JornadaSnapshot
         const ref = acumuladorPorEmpleado.get(r.empleado_id)
         if (ref) {
             ref.detalle = sumarJornada(ref.detalle, r)
         } else {
             acumuladorPorEmpleado.set(r.empleado_id, {
                 detalle: sumarJornada(acumuladorVacio(), r),
-                nombre: usuarioObj?.nombre ?? '',
+                nombre: r.usuario_nombre ?? '',
                 operacion: r.operacion,
             })
         }

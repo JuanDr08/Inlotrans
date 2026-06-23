@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getD1, generateId } from '@/lib/d1/client'
 import { revalidatePath } from 'next/cache'
 import { getUserProfile, requireAdmin, requireAdminOrCoordinador } from '@/lib/auth'
 import { registrarCompensaTiempo } from '@/lib/jornadas'
@@ -10,7 +10,7 @@ export async function crearNovedad(formData: FormData) {
     const profile = await getUserProfile()
     requireAdminOrCoordinador(profile)
 
-    const supabase = await createClient()
+    const db = getD1()
 
     const usuario_id = formData.get('usuario_id') as string
     const tipo_novedad = formData.get('tipo_novedad') as string
@@ -28,7 +28,6 @@ export async function crearNovedad(formData: FormData) {
         return { success: false, error: 'Faltan campos obligatorios' }
     }
 
-    // Resolver fechas según si vino rango o fecha única
     let fecha_inicio: string | null = null
     let fecha_fin: string | null = null
     let fecha_novedad: string | null = null
@@ -43,12 +42,10 @@ export async function crearNovedad(formData: FormData) {
         return { success: false, error: 'Falta especificar la fecha de la novedad' }
     }
 
-    // Validar que el usuario existe y el coordinador pueda tocarlo
-    const { data: usuario } = await supabase
-        .from('usuarios')
-        .select('id, nombre, operacion')
-        .eq('id', usuario_id)
-        .single()
+    const usuario = await db.prepare(
+        'SELECT id, nombre, operacion FROM usuarios WHERE id = ?'
+    ).bind(usuario_id).first<{ id: string; nombre: string; operacion: string }>()
+
     if (!usuario) {
         return { success: false, error: 'La cédula ingresada no corresponde a un empleado válido.' }
     }
@@ -56,46 +53,47 @@ export async function crearNovedad(formData: FormData) {
         return { success: false, error: 'Solo podés crear novedades para empleados de tu operación.' }
     }
 
-    // Insertar la novedad con nombres semánticos
-    const { data: novedad, error } = await supabase
-        .from('novedades')
-        .insert({
+    const novedadId = generateId()
+
+    try {
+        await db.prepare(
+            `INSERT INTO novedades (id, usuario_id, usuario_nombre, tipo_novedad, fecha_novedad,
+                fecha_inicio, fecha_fin, es_pagado, codigo_causa, tipo_ausentismo,
+                valor_monetario, descripcion)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(
+            novedadId,
             usuario_id,
-            usuario_nombre: usuario.nombre,
+            usuario.nombre,
             tipo_novedad,
             fecha_novedad,
             fecha_inicio,
             fecha_fin,
-            es_pagado: es_pagado_raw === 'true',
-            codigo_causa: codigo_causa_raw ? parseInt(codigo_causa_raw, 10) : null,
-            tipo_ausentismo: tipo_ausentismo_raw ? parseInt(tipo_ausentismo_raw, 10) : null,
-            valor_monetario: valor_monetario_raw ? parseFloat(valor_monetario_raw) : null,
+            es_pagado_raw === 'true' ? 1 : 0,
+            codigo_causa_raw ? parseInt(codigo_causa_raw, 10) : null,
+            tipo_ausentismo_raw ? parseInt(tipo_ausentismo_raw, 10) : null,
+            valor_monetario_raw ? parseFloat(valor_monetario_raw) : null,
             descripcion,
-        })
-        .select('id')
-        .single()
-
-    if (error || !novedad) {
-        console.error('Error insertando novedad:', error)
+        ).run()
+    } catch (err) {
+        console.error('Error insertando novedad:', err)
         return { success: false, error: 'Error interno al registrar la novedad.' }
     }
 
-    // Si es COMPENSA_TIEMPO, descontar de la bolsa
     if (tipo_novedad === 'COMPENSA_TIEMPO') {
         const horas = parseFloat(horas_compensa_raw ?? '')
         if (!Number.isFinite(horas) || horas <= 0) {
-            // Rollback de la novedad
-            await supabase.from('novedades').delete().eq('id', novedad.id)
+            await db.prepare('DELETE FROM novedades WHERE id = ?').bind(novedadId).run()
             return { success: false, error: 'Horas de compensación inválidas.' }
         }
         const minutos = redondearMediaHora(Math.round(horas * 60))
         const res = await registrarCompensaTiempo({
             empleadoId: usuario_id,
             minutos,
-            novedadId: novedad.id,
+            novedadId,
         })
         if (res.error) {
-            await supabase.from('novedades').delete().eq('id', novedad.id)
+            await db.prepare('DELETE FROM novedades WHERE id = ?').bind(novedadId).run()
             return { success: false, error: res.error }
         }
     }
@@ -108,12 +106,11 @@ export async function eliminarNovedad(id: string) {
     const profile = await getUserProfile()
     requireAdmin(profile)
 
-    const supabase = await createClient()
-
-    const { error } = await supabase.from('novedades').delete().eq('id', id)
-
-    if (error) {
-        console.error('Error eliminando novedad:', error)
+    try {
+        const db = getD1()
+        await db.prepare('DELETE FROM novedades WHERE id = ?').bind(id).run()
+    } catch (err) {
+        console.error('Error eliminando novedad:', err)
         return { success: false, error: 'No se pudo eliminar la novedad' }
     }
 
@@ -122,11 +119,9 @@ export async function eliminarNovedad(id: string) {
 }
 
 export async function buscarEmpleadoNombre(cedula: string) {
-    const supabase = await createClient()
-    const { data } = await supabase
-        .from('usuarios')
-        .select('nombre')
-        .eq('id', cedula)
-        .single()
+    const db = getD1()
+    const data = await db.prepare(
+        'SELECT nombre FROM usuarios WHERE id = ?'
+    ).bind(cedula).first<{ nombre: string }>()
     return data?.nombre || null
 }

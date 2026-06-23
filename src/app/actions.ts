@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 import {
     abrirJornada,
     cerrarJornada,
@@ -11,21 +11,21 @@ import {
 export async function validarCedula(cedula: string) {
     if (!cedula) return { success: false, error: 'Cédula vacía' }
 
-    const supabase = await createClient()
-    const { data: usuario, error } = await supabase
-        .from('usuarios')
-        .select('id, nombre, status, operacion')
-        .eq('id', cedula)
-        .maybeSingle()
+    try {
+        const db = getD1()
+        const usuario = await db.prepare(
+            'SELECT id, nombre, status, operacion FROM usuarios WHERE id = ?'
+        ).bind(cedula).first<{ id: string; nombre: string; status: string; operacion: string }>()
 
-    if (error && error.code !== 'PGRST116') {
-        console.error('Error validando cédula:', error)
+        if (!usuario) return { success: false, error: 'Usuario no encontrado o sin permisos' }
+        if (usuario.status === 'inactivo') {
+            return { success: false, error: 'Usuario inactivo. No puede registrar asistencias.' }
+        }
+        return { success: true, data: usuario }
+    } catch (err) {
+        console.error('Error validando cédula:', err)
+        return { success: false, error: 'Usuario no encontrado o sin permisos' }
     }
-    if (!usuario) return { success: false, error: 'Usuario no encontrado o sin permisos' }
-    if (usuario.status === 'inactivo') {
-        return { success: false, error: 'Usuario inactivo. No puede registrar asistencias.' }
-    }
-    return { success: true, data: usuario }
 }
 
 export async function getEstadoJornada(cedula: string) {
@@ -58,8 +58,6 @@ interface RegistrarAsistenciaInput {
     usuario_nombre: string
     operacion: string
     tipo: 'ENTRADA' | 'SALIDA'
-    // La foto es obligatoria en el cliente pero NO se almacena. Se recibe
-    // como marcador de que el empleado pasó el ritual del kiosco.
     foto_base64: string | null
 }
 
@@ -68,7 +66,6 @@ export async function registrarAsistenciaAPI(input: RegistrarAsistenciaInput) {
         if (!input.foto_base64) {
             return { success: false, error: 'Es obligatorio registrar una foto.' }
         }
-        // Nota: la foto se recibe pero se descarta — no se persiste en ningún lado.
 
         if (input.tipo === 'ENTRADA') {
             const activa = await obtenerJornadaActiva(input.id)

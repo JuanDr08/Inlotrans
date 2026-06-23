@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { EmpleadoForm } from './EmpleadoForm'
 import { Button } from '@/components/ui/button'
@@ -12,18 +12,20 @@ export default async function EmpleadosPage() {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
 
-    const supabase = await createClient()
+    const db = getD1()
 
-    const empleadosQuery = supabase
-        .from('usuarios')
-        .select('*')
-        .order('nombre', { ascending: true })
-
+    let empleados
     if (profile.rol === 'coordinador' && profile.operacion_nombre) {
-        empleadosQuery.eq('operacion', profile.operacion_nombre)
+        const { results } = await db.prepare(
+            'SELECT * FROM usuarios WHERE operacion = ? ORDER BY nombre ASC'
+        ).bind(profile.operacion_nombre).all()
+        empleados = results
+    } else {
+        const { results } = await db.prepare(
+            'SELECT * FROM usuarios ORDER BY nombre ASC'
+        ).all()
+        empleados = results
     }
-
-    const { data: empleados } = await empleadosQuery
 
     const resOps = await getOperacionesAdmin()
     const allOperaciones = resOps.success && resOps.data ? resOps.data : []

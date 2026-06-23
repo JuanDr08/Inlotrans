@@ -1,158 +1,157 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 
 export async function getEmpleadoDetalle(cedula: string) {
-    const supabase = await createClient()
+    try {
+        const db = getD1()
+        const empleado = await db.prepare(
+            'SELECT * FROM usuarios WHERE id = ?'
+        ).bind(cedula).first()
 
-    const { data: empleado, error } = await supabase
-        .from('usuarios')
-        .select('*')
-        .eq('id', cedula)
-        .maybeSingle()
-
-    if (error) {
-        console.error('[getEmpleadoDetalle]', error)
+        return empleado ?? null
+    } catch (err) {
+        console.error('[getEmpleadoDetalle]', err)
         return null
     }
-    return empleado
 }
 
-/**
- * Jornadas del empleado en un rango (por fecha de entrada).
- * Trae el snapshot completo de minutos + estado para mostrar desglose por día.
- */
 export async function getJornadasRango(
     cedula: string,
     fechaInicio: string,
     fechaFin: string,
 ) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('jornadas')
-        .select(
-            'id, empleado_id, operacion, entrada, salida, estado, minutos_total, minutos_normales, minutos_nocturnas, minutos_domingos, minutos_festivos, minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias, minutos_extras_nocturnas, minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo, minutos_almuerzo_descontados, cerrada_por, alerta_critica',
-        )
-        .eq('empleado_id', cedula)
-        .gte('entrada', fechaInicio)
-        .lte('entrada', fechaFin)
-        .order('entrada', { ascending: false })
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            `SELECT id, empleado_id, operacion, entrada, salida, estado, minutos_total,
+                    minutos_normales, minutos_nocturnas, minutos_domingos, minutos_festivos,
+                    minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias,
+                    minutos_extras_nocturnas, minutos_extras_dominical_festivo,
+                    minutos_extras_nocturna_dominical_festivo, minutos_almuerzo_descontados,
+                    cerrada_por, alerta_critica
+             FROM jornadas
+             WHERE empleado_id = ? AND entrada >= ? AND entrada <= ?
+             ORDER BY entrada DESC`
+        ).bind(cedula, fechaInicio, fechaFin).all()
 
-    if (error) {
-        console.error('[getJornadasRango]', error)
+        return results ?? []
+    } catch (err) {
+        console.error('[getJornadasRango]', err)
         return []
     }
-    return data ?? []
 }
 
 export async function getNovedadesEmpleado(cedula: string, limite = 20) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('novedades')
-        .select(
-            'id, tipo_novedad, fecha_novedad, fecha_inicio, fecha_fin, es_pagado, codigo_causa, valor_monetario, descripcion, created_at',
-        )
-        .eq('usuario_id', cedula)
-        .order('fecha_novedad', { ascending: false })
-        .limit(limite)
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            `SELECT id, tipo_novedad, fecha_novedad, fecha_inicio, fecha_fin, es_pagado,
+                    codigo_causa, valor_monetario, descripcion, created_at
+             FROM novedades
+             WHERE usuario_id = ?
+             ORDER BY fecha_novedad DESC
+             LIMIT ?`
+        ).bind(cedula, limite).all()
 
-    if (error) return []
-    return data ?? []
+        return results ?? []
+    } catch (err) {
+        return []
+    }
 }
 
 export async function getMovimientosBolsa(cedula: string, limite = 15) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('movimientos_bolsa')
-        .select(
-            'id, minutos, motivo, saldo_antes, saldo_despues, nota, created_at, jornada_id, novedad_id',
-        )
-        .eq('empleado_id', cedula)
-        .order('created_at', { ascending: false })
-        .limit(limite)
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            `SELECT id, minutos, motivo, saldo_antes, saldo_despues, nota, created_at,
+                    jornada_id, novedad_id
+             FROM movimientos_bolsa
+             WHERE empleado_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?`
+        ).bind(cedula, limite).all()
 
-    if (error) return []
-    return data ?? []
+        return results ?? []
+    } catch (err) {
+        return []
+    }
 }
 
-/**
- * Aprobaciones de extras del empleado (últimas N, ordenadas por estado y fecha).
- */
 export async function getAprobacionesEmpleado(cedula: string, limite = 10) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('aprobaciones_extras')
-        .select(
-            'id, jornada_id, minutos_solicitados, estado, coordinador_id, nota_coordinador, created_at, updated_at',
-        )
-        .eq('empleado_id', cedula)
-        .order('created_at', { ascending: false })
-        .limit(limite)
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            `SELECT id, jornada_id, minutos_solicitados, estado, coordinador_id,
+                    nota_coordinador, created_at, updated_at
+             FROM aprobaciones_extras
+             WHERE empleado_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?`
+        ).bind(cedula, limite).all()
 
-    if (error) return []
-    return data ?? []
+        return results ?? []
+    } catch (err) {
+        return []
+    }
 }
 
-/**
- * Alertas no leídas del empleado.
- */
 export async function getAlertasEmpleado(cedula: string) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('alertas')
-        .select('id, tipo, jornada_id, operacion, mensaje, leida, created_at')
-        .eq('empleado_id', cedula)
-        .eq('leida', false)
-        .order('created_at', { ascending: false })
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            `SELECT id, tipo, jornada_id, operacion, mensaje, leida, created_at
+             FROM alertas
+             WHERE empleado_id = ? AND leida = 0
+             ORDER BY created_at DESC`
+        ).bind(cedula).all()
 
-    if (error) return []
-    return data ?? []
+        return results ?? []
+    } catch (err) {
+        return []
+    }
 }
 
-/**
- * Semana dominical más reciente con datos de cumplimiento (44h).
- */
 export async function getSemanaDominicalActual(cedula: string) {
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('semanas_dominicales')
-        .select(
-            'semana_inicio, semana_fin, minutos_ordinarios, minutos_novedades_remuneradas, total_minutos_cumplimiento, paga_domingo, marcado_por, created_at',
-        )
-        .eq('empleado_id', cedula)
-        .order('semana_inicio', { ascending: false })
-        .limit(1)
-        .maybeSingle()
+    try {
+        const db = getD1()
+        const data = await db.prepare(
+            `SELECT semana_inicio, semana_fin, minutos_ordinarios, minutos_novedades_remuneradas,
+                    total_minutos_cumplimiento, paga_domingo, marcado_por, created_at
+             FROM semanas_dominicales
+             WHERE empleado_id = ?
+             ORDER BY semana_inicio DESC
+             LIMIT 1`
+        ).bind(cedula).first()
 
-    if (error) return null
-    return data
+        return data ?? null
+    } catch (err) {
+        return null
+    }
 }
 
-/**
- * Turno asignado a la operación del empleado (si existe). Se muestra como
- * referencia informativa — todavía no se usa en el motor de liquidación.
- */
 export async function getTurnoOperacion(operacion: string | null) {
     if (!operacion) return null
-    const supabase = await createClient()
 
-    const { data: op } = await supabase
-        .from('operaciones')
-        .select('id, limite_horas, minutos_almuerzo')
-        .eq('nombre', operacion)
-        .maybeSingle()
+    try {
+        const db = getD1()
 
-    if (!op) return null
+        const op = await db.prepare(
+            'SELECT id, limite_horas, minutos_almuerzo FROM operaciones WHERE nombre = ?'
+        ).bind(operacion).first<{ id: string; limite_horas: number; minutos_almuerzo: number }>()
 
-    const { data: turnos } = await supabase
-        .from('turnos')
-        .select('nombre, hora_inicio, hora_fin')
-        .eq('operacion_id', op.id)
-        .order('hora_inicio', { ascending: true })
+        if (!op) return null
 
-    return {
-        limite_horas: op.limite_horas,
-        minutos_almuerzo: op.minutos_almuerzo,
-        turnos: turnos ?? [],
+        const { results: turnos } = await db.prepare(
+            'SELECT nombre, hora_inicio, hora_fin FROM turnos WHERE operacion_id = ? ORDER BY hora_inicio ASC'
+        ).bind(op.id).all()
+
+        return {
+            limite_horas: op.limite_horas,
+            minutos_almuerzo: op.minutos_almuerzo,
+            turnos: turnos ?? [],
+        }
+    } catch (err) {
+        return null
     }
 }

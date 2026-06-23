@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getD1, generateId } from '@/lib/d1/client'
 import {
     calcularPeriodosHorasOptimizado,
     obtenerFestivosParaRango,
@@ -133,14 +133,13 @@ async function calcularSnapshot(
 }
 
 async function obtenerConfigOperacion(
-    supabase: Awaited<ReturnType<typeof createClient>>,
+    db: any,
     nombre: string,
 ): Promise<{ limite_horas: number; minutos_almuerzo: number }> {
-    const { data } = await supabase
-        .from('operaciones')
-        .select('limite_horas, minutos_almuerzo')
-        .eq('nombre', nombre)
-        .maybeSingle()
+    const data = await db
+        .prepare('SELECT limite_horas, minutos_almuerzo FROM operaciones WHERE nombre = ?')
+        .bind(nombre)
+        .first() as { limite_horas: number; minutos_almuerzo: number } | null
     return {
         limite_horas: data?.limite_horas ?? 8,
         minutos_almuerzo: data?.minutos_almuerzo ?? 0,
@@ -148,19 +147,18 @@ async function obtenerConfigOperacion(
 }
 
 async function obtenerSaldoBolsa(
-    supabase: Awaited<ReturnType<typeof createClient>>,
+    db: any,
     empleadoId: string,
 ): Promise<number> {
-    const { data } = await supabase
-        .from('bolsa_horas')
-        .select('saldo_minutos')
-        .eq('empleado_id', empleadoId)
-        .maybeSingle()
+    const data = await db
+        .prepare('SELECT saldo_minutos FROM bolsa_horas WHERE empleado_id = ?')
+        .bind(empleadoId)
+        .first() as { saldo_minutos: number } | null
     return data?.saldo_minutos ?? 0
 }
 
 async function registrarMovimientoBolsa(
-    supabase: Awaited<ReturnType<typeof createClient>>,
+    db: any,
     params: {
         empleadoId: string
         minutos: number
@@ -174,34 +172,33 @@ async function registrarMovimientoBolsa(
 ): Promise<void> {
     const ahora = new Date().toISOString()
 
-    // upsert bolsa_horas
-    const { data: bolsa } = await supabase
-        .from('bolsa_horas')
-        .select('empleado_id')
-        .eq('empleado_id', params.empleadoId)
-        .maybeSingle()
+    // Atomic upsert — fixes race condition from the SELECT→INSERT/UPDATE pattern
+    await db
+        .prepare(
+            `INSERT INTO bolsa_horas (empleado_id, saldo_minutos, updated_at)
+             VALUES (?, ?, ?)
+             ON CONFLICT(empleado_id) DO UPDATE SET saldo_minutos = ?, updated_at = ?`,
+        )
+        .bind(params.empleadoId, params.saldoDespues, ahora, params.saldoDespues, ahora)
+        .run()
 
-    if (bolsa) {
-        await supabase
-            .from('bolsa_horas')
-            .update({ saldo_minutos: params.saldoDespues, updated_at: ahora })
-            .eq('empleado_id', params.empleadoId)
-    } else {
-        await supabase
-            .from('bolsa_horas')
-            .insert({ empleado_id: params.empleadoId, saldo_minutos: params.saldoDespues })
-    }
-
-    await supabase.from('movimientos_bolsa').insert({
-        empleado_id: params.empleadoId,
-        jornada_id: params.jornadaId ?? null,
-        novedad_id: params.novedadId ?? null,
-        minutos: params.minutos,
-        motivo: params.motivo,
-        saldo_antes: params.saldoAntes,
-        saldo_despues: params.saldoDespues,
-        nota: params.nota ?? null,
-    })
+    await db
+        .prepare(
+            `INSERT INTO movimientos_bolsa (id, empleado_id, jornada_id, novedad_id, minutos, motivo, saldo_antes, saldo_despues, nota)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+            generateId(),
+            params.empleadoId,
+            params.jornadaId ?? null,
+            params.novedadId ?? null,
+            params.minutos,
+            params.motivo,
+            params.saldoAntes,
+            params.saldoDespues,
+            params.nota ?? null,
+        )
+        .run()
 }
 
 /**
@@ -209,27 +206,24 @@ async function registrarMovimientoBolsa(
  * fechaJornada en formato YYYY-MM-DD (hora Colombia).
  */
 async function hayNovedadRemuneradaParaFecha(
-    supabase: Awaited<ReturnType<typeof createClient>>,
+    db: any,
     empleadoId: string,
     fechaJornada: string,
 ): Promise<boolean> {
-    const { data: puntual } = await supabase
-        .from('novedades')
-        .select('id')
-        .eq('usuario_id', empleadoId)
-        .eq('es_pagado', true)
-        .eq('fecha_novedad', fechaJornada)
-        .maybeSingle()
+    const puntual = await db
+        .prepare(
+            'SELECT id FROM novedades WHERE usuario_id = ? AND es_pagado = 1 AND fecha_novedad = ? LIMIT 1',
+        )
+        .bind(empleadoId, fechaJornada)
+        .first() as { id: string } | null
     if (puntual) return true
 
-    const { data: rango } = await supabase
-        .from('novedades')
-        .select('id')
-        .eq('usuario_id', empleadoId)
-        .eq('es_pagado', true)
-        .lte('fecha_inicio', fechaJornada)
-        .gte('fecha_fin', fechaJornada)
-        .maybeSingle()
+    const rango = await db
+        .prepare(
+            'SELECT id FROM novedades WHERE usuario_id = ? AND es_pagado = 1 AND fecha_inicio <= ? AND fecha_fin >= ? LIMIT 1',
+        )
+        .bind(empleadoId, fechaJornada, fechaJornada)
+        .first() as { id: string } | null
     return !!rango
 }
 
@@ -250,29 +244,32 @@ export async function abrirJornada(
     cedula: string,
     operacion: string,
 ): Promise<Resultado<Jornada>> {
-    const supabase = await createClient()
+    const db = getD1()
 
-    const { data: activa } = await supabase
-        .from('jornadas')
-        .select('id')
-        .eq('empleado_id', cedula)
-        .eq('estado', 'ABIERTO')
-        .maybeSingle()
+    const activa = await db
+        .prepare("SELECT id FROM jornadas WHERE empleado_id = ? AND estado = 'ABIERTO'")
+        .bind(cedula)
+        .first() as { id: string } | null
     if (activa) return { data: null, error: 'Ya existe una jornada activa para este empleado.' }
 
-    const { data, error } = await supabase
-        .from('jornadas')
-        .insert({
-            empleado_id: cedula,
-            operacion,
-            entrada: new Date().toISOString(),
-            estado: 'ABIERTO',
-        })
-        .select('*')
-        .single()
+    const id = generateId()
+    const ahora = new Date().toISOString()
 
-    if (error) return { data: null, error: error.message }
-    return { data: data as Jornada, error: null }
+    await db
+        .prepare(
+            `INSERT INTO jornadas (id, empleado_id, operacion, entrada, estado, created_at, updated_at)
+             VALUES (?, ?, ?, ?, 'ABIERTO', ?, ?)`,
+        )
+        .bind(id, cedula, operacion, ahora, ahora, ahora)
+        .run()
+
+    const data = await db
+        .prepare('SELECT * FROM jornadas WHERE id = ?')
+        .bind(id)
+        .first() as Jornada | null
+
+    if (!data) return { data: null, error: 'Error al crear la jornada.' }
+    return { data, error: null }
 }
 
 /**
@@ -283,23 +280,20 @@ export async function cerrarJornada(
     cedula: string,
     salidaTimestamp?: Date,
 ): Promise<Resultado<Jornada>> {
-    const supabase = await createClient()
+    const db = getD1()
     const salida = salidaTimestamp ?? new Date()
 
-    const { data: jornada, error: errBuscar } = await supabase
-        .from('jornadas')
-        .select('*')
-        .eq('empleado_id', cedula)
-        .eq('estado', 'ABIERTO')
-        .maybeSingle()
-    if (errBuscar) return { data: null, error: errBuscar.message }
+    const jornada = await db
+        .prepare("SELECT * FROM jornadas WHERE empleado_id = ? AND estado = 'ABIERTO'")
+        .bind(cedula)
+        .first() as Jornada | null
     if (!jornada) return { data: null, error: 'No existe jornada activa para este empleado.' }
 
-    const config = await obtenerConfigOperacion(supabase, jornada.operacion)
+    const config = await obtenerConfigOperacion(db, jornada.operacion)
     const entrada = new Date(jornada.entrada)
     const snapshot = await calcularSnapshot(entrada, salida, config.minutos_almuerzo)
 
-    const jornadaActualizada = await liquidarJornada(supabase, {
+    const jornadaActualizada = await liquidarJornada(db, {
         jornada,
         snapshot,
         salida,
@@ -319,22 +313,19 @@ export async function corregirJornadaInconsistente(
     jornadaId: string,
     horaSalidaReal: Date,
 ): Promise<Resultado<Jornada>> {
-    const supabase = await createClient()
+    const db = getD1()
 
-    const { data: jornada, error: errBuscar } = await supabase
-        .from('jornadas')
-        .select('*')
-        .eq('id', jornadaId)
-        .eq('estado', 'INCONSISTENTE')
-        .maybeSingle()
-    if (errBuscar) return { data: null, error: errBuscar.message }
+    const jornada = await db
+        .prepare("SELECT * FROM jornadas WHERE id = ? AND estado = 'INCONSISTENTE'")
+        .bind(jornadaId)
+        .first() as Jornada | null
     if (!jornada) return { data: null, error: 'Jornada no encontrada o no está INCONSISTENTE.' }
 
-    const config = await obtenerConfigOperacion(supabase, jornada.operacion)
+    const config = await obtenerConfigOperacion(db, jornada.operacion)
     const entrada = new Date(jornada.entrada)
     const snapshot = await calcularSnapshot(entrada, horaSalidaReal, config.minutos_almuerzo)
 
-    const jornadaActualizada = await liquidarJornada(supabase, {
+    const jornadaActualizada = await liquidarJornada(db, {
         jornada,
         snapshot,
         salida: horaSalidaReal,
@@ -345,11 +336,10 @@ export async function corregirJornadaInconsistente(
     })
 
     // Marcar alertas INCONSISTENTE de esta jornada como leídas
-    await supabase
-        .from('alertas')
-        .update({ leida: true })
-        .eq('jornada_id', jornadaId)
-        .eq('tipo', 'INCONSISTENTE')
+    await db
+        .prepare("UPDATE alertas SET leida = 1 WHERE jornada_id = ? AND tipo = 'INCONSISTENTE'")
+        .bind(jornadaId)
+        .run()
 
     return { data: jornadaActualizada, error: null }
 }
@@ -369,7 +359,7 @@ interface LiquidarArgs {
 }
 
 async function liquidarJornada(
-    supabase: Awaited<ReturnType<typeof createClient>>,
+    db: any,
     args: LiquidarArgs,
 ): Promise<Jornada> {
     const limiteMinutos = args.limiteHoras * 60
@@ -378,40 +368,70 @@ async function liquidarJornada(
     const alertaCritica = minutosEfectivos > 12 * 60
 
     // 1. Actualizar la jornada con el snapshot
-    const updatePayload: Record<string, unknown> = {
-        ...args.snapshot,
-        estado: args.estadoFinal,
-        salida: args.salida.toISOString(),
-        cerrada_por: args.cerradaPor,
-        alerta_critica: alertaCritica,
-    }
-    if (args.horaSalidaManual) {
-        updatePayload.hora_salida_manual = args.horaSalidaManual.toISOString()
-    }
+    const ahora = new Date().toISOString()
+    const horaSalidaManual = args.horaSalidaManual?.toISOString() ?? null
 
-    const { data: jornadaActualizada, error: errUpdate } = await supabase
-        .from('jornadas')
-        .update(updatePayload)
-        .eq('id', args.jornada.id)
-        .select('*')
-        .single()
+    await db
+        .prepare(
+            `UPDATE jornadas SET
+                minutos_normales = ?, minutos_nocturnas = ?, minutos_domingos = ?,
+                minutos_festivos = ?, minutos_domingos_festivos_nocturnos = ?,
+                minutos_extras_ordinarias = ?, minutos_extras_nocturnas = ?,
+                minutos_extras_dominical_festivo = ?, minutos_extras_nocturna_dominical_festivo = ?,
+                minutos_total = ?, minutos_almuerzo_descontados = ?,
+                estado = ?, salida = ?, cerrada_por = ?, alerta_critica = ?,
+                hora_salida_manual = ?, updated_at = ?
+             WHERE id = ?`,
+        )
+        .bind(
+            args.snapshot.minutos_normales,
+            args.snapshot.minutos_nocturnas,
+            args.snapshot.minutos_domingos,
+            args.snapshot.minutos_festivos,
+            args.snapshot.minutos_domingos_festivos_nocturnos,
+            args.snapshot.minutos_extras_ordinarias,
+            args.snapshot.minutos_extras_nocturnas,
+            args.snapshot.minutos_extras_dominical_festivo,
+            args.snapshot.minutos_extras_nocturna_dominical_festivo,
+            args.snapshot.minutos_total,
+            args.snapshot.minutos_almuerzo_descontados,
+            args.estadoFinal,
+            args.salida.toISOString(),
+            args.cerradaPor,
+            alertaCritica ? 1 : 0,
+            horaSalidaManual,
+            ahora,
+            args.jornada.id,
+        )
+        .run()
 
-    if (errUpdate) throw new Error(errUpdate.message)
+    const jornadaActualizada = await db
+        .prepare('SELECT * FROM jornadas WHERE id = ?')
+        .bind(args.jornada.id)
+        .first() as Jornada | null
+
+    if (!jornadaActualizada) throw new Error('Error al actualizar la jornada.')
 
     // 2. Alerta crítica si >12h
     if (alertaCritica) {
-        await supabase.from('alertas').insert({
-            tipo: 'ALERTA_CRITICA',
-            empleado_id: args.jornada.empleado_id,
-            jornada_id: args.jornada.id,
-            operacion: args.jornada.operacion,
-            mensaje: `La jornada superó 12h (${(minutosEfectivos / 60).toFixed(1)}h efectivas).`,
-        })
+        await db
+            .prepare(
+                `INSERT INTO alertas (id, tipo, empleado_id, jornada_id, operacion, mensaje)
+                 VALUES (?, 'ALERTA_CRITICA', ?, ?, ?, ?)`,
+            )
+            .bind(
+                generateId(),
+                args.jornada.empleado_id,
+                args.jornada.id,
+                args.jornada.operacion,
+                `La jornada superó 12h (${(minutosEfectivos / 60).toFixed(1)}h efectivas).`,
+            )
+            .run()
     }
 
     // 3. Excedente → bolsa primero, resto a aprobación
     if (excedente > 0) {
-        const saldoAntes = await obtenerSaldoBolsa(supabase, args.jornada.empleado_id)
+        const saldoAntes = await obtenerSaldoBolsa(db, args.jornada.empleado_id)
         let extrasPendientes = excedente
 
         if (saldoAntes < 0) {
@@ -419,7 +439,7 @@ async function liquidarJornada(
             const saldoDespues = saldoAntes + abono
             extrasPendientes = excedente - abono
 
-            await registrarMovimientoBolsa(supabase, {
+            await registrarMovimientoBolsa(db, {
                 empleadoId: args.jornada.empleado_id,
                 minutos: abono,
                 motivo: 'ABONO_EXCEDENTE',
@@ -431,35 +451,48 @@ async function liquidarJornada(
         }
 
         if (extrasPendientes > 0) {
-            await supabase.from('aprobaciones_extras').insert({
-                jornada_id: args.jornada.id,
-                empleado_id: args.jornada.empleado_id,
-                minutos_solicitados: extrasPendientes,
-                estado: 'PENDIENTE',
-            })
-            await supabase.from('alertas').insert({
-                tipo: 'EXTRAS_PENDIENTES',
-                empleado_id: args.jornada.empleado_id,
-                jornada_id: args.jornada.id,
-                operacion: args.jornada.operacion,
-                mensaje: `${(extrasPendientes / 60).toFixed(1)}h extra pendientes de aprobación.`,
-            })
+            await db
+                .prepare(
+                    `INSERT INTO aprobaciones_extras (id, jornada_id, empleado_id, minutos_solicitados, estado)
+                     VALUES (?, ?, ?, ?, 'PENDIENTE')`,
+                )
+                .bind(
+                    generateId(),
+                    args.jornada.id,
+                    args.jornada.empleado_id,
+                    extrasPendientes,
+                )
+                .run()
+
+            await db
+                .prepare(
+                    `INSERT INTO alertas (id, tipo, empleado_id, jornada_id, operacion, mensaje)
+                     VALUES (?, 'EXTRAS_PENDIENTES', ?, ?, ?, ?)`,
+                )
+                .bind(
+                    generateId(),
+                    args.jornada.empleado_id,
+                    args.jornada.id,
+                    args.jornada.operacion,
+                    `${(extrasPendientes / 60).toFixed(1)}h extra pendientes de aprobación.`,
+                )
+                .run()
         }
     } else if (minutosEfectivos < limiteMinutos) {
         // 4. Déficit — si no hay novedad remunerada que cubra, descuenta bolsa
         const fechaJornada = fechaColombiaYYYYMMDD(new Date(args.jornada.entrada))
         const cubierta = await hayNovedadRemuneradaParaFecha(
-            supabase,
+            db,
             args.jornada.empleado_id,
             fechaJornada,
         )
 
         if (!cubierta) {
             const deficit = limiteMinutos - minutosEfectivos
-            const saldoAntes = await obtenerSaldoBolsa(supabase, args.jornada.empleado_id)
+            const saldoAntes = await obtenerSaldoBolsa(db, args.jornada.empleado_id)
             const saldoDespues = saldoAntes - deficit
 
-            await registrarMovimientoBolsa(supabase, {
+            await registrarMovimientoBolsa(db, {
                 empleadoId: args.jornada.empleado_id,
                 minutos: -deficit,
                 motivo: 'CARGO_DEFICIT',
@@ -479,47 +512,47 @@ async function liquidarJornada(
 // ==================================================
 
 export async function obtenerJornadaActiva(cedula: string): Promise<Jornada | null> {
-    const supabase = await createClient()
-    const { data } = await supabase
-        .from('jornadas')
-        .select('*')
-        .eq('empleado_id', cedula)
-        .eq('estado', 'ABIERTO')
-        .maybeSingle()
-    return (data as Jornada) ?? null
+    const db = getD1()
+    const data = await db
+        .prepare("SELECT * FROM jornadas WHERE empleado_id = ? AND estado = 'ABIERTO'")
+        .bind(cedula)
+        .first() as Jornada | null
+    return data ?? null
 }
 
 export async function obtenerBolsaHoras(cedula: string): Promise<number> {
-    const supabase = await createClient()
-    const { data } = await supabase
-        .from('bolsa_horas')
-        .select('saldo_minutos')
-        .eq('empleado_id', cedula)
-        .maybeSingle()
+    const db = getD1()
+    const data = await db
+        .prepare('SELECT saldo_minutos FROM bolsa_horas WHERE empleado_id = ?')
+        .bind(cedula)
+        .first() as { saldo_minutos: number } | null
     return data?.saldo_minutos ?? 0
 }
 
 export async function tieneJornadasInconsistentes(cedula: string): Promise<boolean> {
-    const supabase = await createClient()
-    const { count } = await supabase
-        .from('jornadas')
-        .select('id', { count: 'exact', head: true })
-        .eq('empleado_id', cedula)
-        .eq('estado', 'INCONSISTENTE')
-    return (count ?? 0) > 0
+    const db = getD1()
+    const row = await db
+        .prepare("SELECT COUNT(*) as count FROM jornadas WHERE empleado_id = ? AND estado = 'INCONSISTENTE'")
+        .bind(cedula)
+        .first<{ count: number }>()
+    return (row?.count ?? 0) > 0
 }
 
 export async function obtenerJornadasInconsistentes(operacion?: string): Promise<Jornada[]> {
-    const supabase = await createClient()
-    let query = supabase
-        .from('jornadas')
-        .select('*')
-        .eq('estado', 'INCONSISTENTE')
-        .order('entrada', { ascending: false })
+    const db = getD1()
 
-    if (operacion) query = query.eq('operacion', operacion)
-    const { data } = await query
-    return (data ?? []) as Jornada[]
+    if (operacion) {
+        const { results } = await db
+            .prepare("SELECT * FROM jornadas WHERE estado = 'INCONSISTENTE' AND operacion = ? ORDER BY entrada DESC")
+            .bind(operacion)
+            .all()
+        return (results ?? []) as Jornada[]
+    }
+
+    const { results } = await db
+        .prepare("SELECT * FROM jornadas WHERE estado = 'INCONSISTENTE' ORDER BY entrada DESC")
+        .all()
+    return (results ?? []) as Jornada[]
 }
 
 // ==================================================
@@ -539,11 +572,11 @@ export async function registrarCompensaTiempo(args: {
     if (args.minutos <= 0) {
         return { data: null, error: 'Los minutos a compensar deben ser positivos.' }
     }
-    const supabase = await createClient()
-    const saldoAntes = await obtenerSaldoBolsa(supabase, args.empleadoId)
+    const db = getD1()
+    const saldoAntes = await obtenerSaldoBolsa(db, args.empleadoId)
     const saldoDespues = saldoAntes - args.minutos
 
-    await registrarMovimientoBolsa(supabase, {
+    await registrarMovimientoBolsa(db, {
         empleadoId: args.empleadoId,
         minutos: -args.minutos,
         motivo: 'NOVEDAD_COMPENSA',

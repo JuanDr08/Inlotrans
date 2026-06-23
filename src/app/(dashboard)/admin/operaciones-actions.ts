@@ -1,11 +1,9 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { getD1, generateId } from '@/lib/d1/client'
 import { unstable_cache } from 'next/cache'
 import { getUserProfile, requireAdmin } from '@/lib/auth'
 
-// Interfaz para la operación
 export type Operacion = {
     id: string
     codigo: string
@@ -17,194 +15,208 @@ export type Operacion = {
     created_at?: string
 }
 
-// Interfaz para turnos
 export type Turno = {
     id: string
     operacion_id: string
     nombre: string
-    hora_inicio: string // TIME format 'HH:MM'
+    hora_inicio: string
     hora_fin: string
     created_at?: string
 }
 
-// 1. Fetch de todas las operaciones (Admin)
 export async function getOperacionesAdmin() {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
-    const { data, error } = await supabase
-        .from('operaciones')
-        .select('*')
-        .order('created_at', { ascending: true })
 
-    if (error) {
-        console.error('Error fetching operaciones (Admin):', error)
-        return { success: false, error: error.message }
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            'SELECT * FROM operaciones ORDER BY created_at ASC'
+        ).all()
+
+        const data = (results ?? []).map((r: any) => ({
+            ...r,
+            status: !!r.status,
+        })) as Operacion[]
+
+        return { success: true, data }
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        console.error('Error fetching operaciones (Admin):', err)
+        return { success: false, error: msg }
     }
-
-    return { success: true, data: data as Operacion[] }
 }
 
-// 2. Fetch cacheado de operaciones activas (Kiosco)
-// Usamos unstable_cache para cachear la respuesta en disco/memoria (revalida cada 5 minutos o cuando manualmente lo desees).
-// The user asked for a "cache ligero".
 export const getOperacionesActivas = unstable_cache(
     async () => {
-        // Usamos el cliente anónimo público puro para evitar usar cookies() dentro de unstable_cache()
-        const supabase = createSupabaseClient(
-            process.env.NEXT_PUBLIC_SUPABASE_URL!,
-            process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-        const { data, error } = await supabase
-            .from('operaciones')
-            .select('id, nombre')
-            .eq('status', true)
-            .order('nombre', { ascending: true })
-
-        if (error) {
-            console.error('Error fetching operaciones (Kiosco cacheado):', error)
+        try {
+            const db = getD1()
+            const { results } = await db.prepare(
+                'SELECT id, nombre FROM operaciones WHERE status = 1 ORDER BY nombre ASC'
+            ).all()
+            return { success: true, data: (results ?? []) as Pick<Operacion, 'id' | 'nombre'>[] }
+        } catch (err) {
+            console.error('Error fetching operaciones (Kiosco cacheado):', err)
             return { success: false, data: [] }
         }
-        return { success: true, data: data as Pick<Operacion, 'id' | 'nombre'>[] }
     },
     ['operaciones-activas'],
-    { revalidate: 300, tags: ['operaciones'] } // Cache de 5 minutos, y le asignamos un tag para forzar la revalidación si creamos una nueva
+    { revalidate: 300, tags: ['operaciones'] }
 )
 
-// 3. Crear o Actualizar
 export async function upsertOperacion(operacion: Partial<Operacion>) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
+    const db = getD1()
 
-    if (operacion.id) {
-        const { error } = await supabase
-            .from('operaciones')
-            .update({
-                codigo: operacion.codigo,
-                nombre: operacion.nombre,
-                status: operacion.status,
-                limite_horas: operacion.limite_horas ?? 8,
-                max_extras_dia: operacion.max_extras_dia ?? 2,
-                minutos_almuerzo: operacion.minutos_almuerzo ?? 0,
-            })
-            .eq('id', operacion.id)
+    try {
+        if (operacion.id) {
+            await db.prepare(
+                `UPDATE operaciones SET codigo = ?, nombre = ?, status = ?, limite_horas = ?,
+                    max_extras_dia = ?, minutos_almuerzo = ?
+                 WHERE id = ?`
+            ).bind(
+                operacion.codigo,
+                operacion.nombre,
+                operacion.status ? 1 : 0,
+                operacion.limite_horas ?? 8,
+                operacion.max_extras_dia ?? 2,
+                operacion.minutos_almuerzo ?? 0,
+                operacion.id
+            ).run()
+        } else {
+            if (!operacion.codigo?.trim()) return { success: false, error: 'El código de operación es obligatorio.' }
 
-        if (error) return { success: false, error: error.message }
-    } else {
-        if (!operacion.codigo?.trim()) return { success: false, error: 'El código de operación es obligatorio.' }
+            const existente = await db.prepare(
+                'SELECT id FROM operaciones WHERE nombre = ?'
+            ).bind(operacion.nombre).first()
+            if (existente) return { success: false, error: 'Ya existe una operación con ese nombre.' }
 
-        const { data: existente } = await supabase.from('operaciones').select('id').eq('nombre', operacion.nombre).single()
-        if (existente) return { success: false, error: 'Ya existe una operación con ese nombre.' }
+            const codigoExistente = await db.prepare(
+                'SELECT id FROM operaciones WHERE codigo = ?'
+            ).bind(operacion.codigo).first()
+            if (codigoExistente) return { success: false, error: 'Ya existe una operación con ese código.' }
 
-        const { data: codigoExistente } = await supabase.from('operaciones').select('id').eq('codigo', operacion.codigo).single()
-        if (codigoExistente) return { success: false, error: 'Ya existe una operación con ese código.' }
-
-        const { error } = await supabase
-            .from('operaciones')
-            .insert({
-                codigo: operacion.codigo.trim().toUpperCase(),
-                nombre: operacion.nombre,
-                status: operacion.status ?? true,
-                limite_horas: operacion.limite_horas ?? 8,
-                max_extras_dia: operacion.max_extras_dia ?? 2,
-                minutos_almuerzo: operacion.minutos_almuerzo ?? 0,
-            })
-
-        if (error) return { success: false, error: error.message }
+            const id = generateId()
+            await db.prepare(
+                `INSERT INTO operaciones (id, codigo, nombre, status, limite_horas, max_extras_dia, minutos_almuerzo)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
+            ).bind(
+                id,
+                operacion.codigo.trim().toUpperCase(),
+                operacion.nombre,
+                operacion.status !== false ? 1 : 0,
+                operacion.limite_horas ?? 8,
+                operacion.max_extras_dia ?? 2,
+                operacion.minutos_almuerzo ?? 0,
+            ).run()
+        }
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
     }
 
-    // Como cambiamos algo, forzamos a Next.js a botar la cache del Kiosco y de la página de admin
     const { revalidateTag } = await import('next/cache')
     revalidateTag('operaciones', 'max')
 
     return { success: true }
 }
 
-// =============================================
-// TURNOS
-// =============================================
-
 export async function getTurnosPorOperacion(operacionId: string) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
 
-    const { data, error } = await supabase
-        .from('turnos')
-        .select('*')
-        .eq('operacion_id', operacionId)
-        .order('hora_inicio', { ascending: true })
+    try {
+        const db = getD1()
+        const { results } = await db.prepare(
+            'SELECT * FROM turnos WHERE operacion_id = ? ORDER BY hora_inicio ASC'
+        ).bind(operacionId).all()
 
-    if (error) return { success: false, error: error.message }
-    return { success: true, data: data as Turno[] }
+        return { success: true, data: (results ?? []) as Turno[] }
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
+    }
 }
 
-// Buscar turnos por nombre de operacion (usado en formulario de empleados)
 export async function getTurnosPorNombreOperacion(nombreOperacion: string) {
-    const supabase = await createClient()
+    try {
+        const db = getD1()
 
-    // Primero obtener el ID de la operacion
-    const { data: op } = await supabase
-        .from('operaciones')
-        .select('id')
-        .eq('nombre', nombreOperacion)
-        .single()
+        const op = await db.prepare(
+            'SELECT id FROM operaciones WHERE nombre = ?'
+        ).bind(nombreOperacion).first<{ id: string }>()
 
-    if (!op) return { success: true, data: [] as Turno[] }
+        if (!op) return { success: true, data: [] as Turno[] }
 
-    const { data, error } = await supabase
-        .from('turnos')
-        .select('*')
-        .eq('operacion_id', op.id)
-        .order('hora_inicio', { ascending: true })
+        const { results } = await db.prepare(
+            'SELECT * FROM turnos WHERE operacion_id = ? ORDER BY hora_inicio ASC'
+        ).bind(op.id).all()
 
-    if (error) return { success: false, data: [] as Turno[] }
-    return { success: true, data: data as Turno[] }
+        return { success: true, data: (results ?? []) as Turno[] }
+    } catch (err) {
+        return { success: false, data: [] as Turno[] }
+    }
 }
 
 export async function crearTurno(turno: { operacion_id: string; nombre: string; hora_inicio: string; hora_fin: string }) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
 
     if (!turno.nombre?.trim() || !turno.hora_inicio || !turno.hora_fin) {
         return { success: false, error: 'Todos los campos del turno son obligatorios' }
     }
 
-    const { error } = await supabase.from('turnos').insert(turno)
-    if (error) return { success: false, error: error.message }
+    try {
+        const db = getD1()
+        const id = generateId()
+        await db.prepare(
+            'INSERT INTO turnos (id, operacion_id, nombre, hora_inicio, hora_fin) VALUES (?, ?, ?, ?, ?)'
+        ).bind(id, turno.operacion_id, turno.nombre, turno.hora_inicio, turno.hora_fin).run()
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
+    }
+
     return { success: true }
 }
 
 export async function editarTurno(id: string, turno: { nombre: string; hora_inicio: string; hora_fin: string }) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
 
-    const { error } = await supabase
-        .from('turnos')
-        .update({ nombre: turno.nombre, hora_inicio: turno.hora_inicio, hora_fin: turno.hora_fin })
-        .eq('id', id)
+    try {
+        const db = getD1()
+        await db.prepare(
+            'UPDATE turnos SET nombre = ?, hora_inicio = ?, hora_fin = ? WHERE id = ?'
+        ).bind(turno.nombre, turno.hora_inicio, turno.hora_fin, id).run()
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
+    }
 
-    if (error) return { success: false, error: error.message }
     return { success: true }
 }
 
 export async function eliminarTurno(id: string) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
 
-    const { error } = await supabase.from('turnos').delete().eq('id', id)
-    if (error) return { success: false, error: error.message }
+    try {
+        const db = getD1()
+        await db.prepare('DELETE FROM turnos WHERE id = ?').bind(id).run()
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
+    }
+
     return { success: true }
 }
 
-// 4. Eliminar
 export async function deleteOperacion(id: string) {
     requireAdmin(await getUserProfile())
-    const supabase = await createClient()
-    const { error } = await supabase
-        .from('operaciones')
-        .delete()
-        .eq('id', id)
 
-    if (error) return { success: false, error: error.message }
+    try {
+        const db = getD1()
+        await db.prepare('DELETE FROM operaciones WHERE id = ?').bind(id).run()
+    } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Error interno'
+        return { success: false, error: msg }
+    }
 
     const { revalidateTag } = await import('next/cache')
     revalidateTag('operaciones', 'max')

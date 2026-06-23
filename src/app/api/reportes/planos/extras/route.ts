@@ -1,6 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { generarPlanoExtras, type LineaExtra } from '@/lib/excel/planos/extras'
+import { getD1 } from '@/lib/d1/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,12 +18,7 @@ const MINUTO_FIELDS = Object.keys(CODIGO_MAP)
 
 export async function GET(request: NextRequest) {
     try {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-        if (!supabaseUrl || !supabaseServiceKey) {
-            return NextResponse.json({ error: 'Config error' }, { status: 500 })
-        }
-        const supabase = createClient(supabaseUrl, supabaseServiceKey)
+        const db = getD1()
 
         const { searchParams } = new URL(request.url)
         const anio = parseInt(searchParams.get('anio') ?? '')
@@ -42,67 +37,54 @@ export async function GET(request: NextRequest) {
         const startDay = quincena === 1 ? 1 : 16
         const endDay = quincena === 1 ? 15 : lastDay
 
-        // UTC range: Colombia is UTC-5, so start 00:00 COL = 05:00 UTC
         const startUTC = new Date(`${anio}-${pad(mes)}-${pad(startDay)}T05:00:00Z`)
         const endUTC = new Date(`${anio}-${pad(mes)}-${pad(endDay)}T05:00:00Z`)
         endUTC.setUTCDate(endUTC.getUTCDate() + 1)
 
-        // Get jornadas that have approved extras in the period
-        const { data: aprobaciones } = await supabase
-            .from('aprobaciones_extras')
-            .select('jornada_id')
-            .eq('estado', 'APROBADA')
+        const { results: aprobaciones } = await db
+            .prepare("SELECT jornada_id FROM aprobaciones_extras WHERE estado = 'APROBADA'")
+            .all()
 
         const jornadaIdsAprobadas = new Set(
-            (aprobaciones ?? []).map((a) => a.jornada_id),
+            ((aprobaciones ?? []) as Record<string, unknown>[]).map((a: Record<string, unknown>) => a.jornada_id as string),
         )
 
-        const { data: jornadas, error } = await supabase
-            .from('jornadas')
-            .select(`
-                id, empleado_id,
-                minutos_extras_ordinarias, minutos_extras_nocturnas,
-                minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo,
-                minutos_nocturnas, minutos_festivos, minutos_domingos,
-                minutos_domingos_festivos_nocturnos
-            `)
-            .in('estado', ['CERRADO', 'CERRADO_MANUAL'])
-            .gte('entrada', startUTC.toISOString())
-            .lt('entrada', endUTC.toISOString())
+        const { results: jornadas } = await db
+            .prepare(
+                `SELECT id, empleado_id,
+                        minutos_extras_ordinarias, minutos_extras_nocturnas,
+                        minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo,
+                        minutos_nocturnas, minutos_festivos, minutos_domingos,
+                        minutos_domingos_festivos_nocturnos
+                 FROM jornadas
+                 WHERE estado IN ('CERRADO', 'CERRADO_MANUAL')
+                 AND entrada >= ? AND entrada < ?`,
+            )
+            .bind(startUTC.toISOString(), endUTC.toISOString())
+            .all()
 
-        if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 })
-        }
-
-        // Aggregate minutes by employee + code
         const agg = new Map<string, number>()
 
         for (const j of jornadas ?? []) {
-            const r = j as Record<string, unknown>
-            const cedula = r.empleado_id as string
-            const jornadaId = r.id as string
+            const cedula = j.empleado_id as string
+            const jornadaId = j.id as string
             const tieneExtrasAprobadas = jornadaIdsAprobadas.has(jornadaId)
 
             for (const field of MINUTO_FIELDS) {
-                const mins = (r[field] as number) ?? 0
+                const mins = (j[field] as number) ?? 0
                 if (mins <= 0) continue
 
-                // Extras (11001-11004) only if approved
                 const codigo = CODIGO_MAP[field]
                 if (codigo <= 11004 && !tieneExtrasAprobadas) continue
 
-                // Recargos (11501+) always included (they're not extras)
-                // But minutos_domingos maps to 11502 too — merge with minutos_festivos
                 const key = `${cedula}::${codigo}`
                 agg.set(key, (agg.get(key) ?? 0) + mins)
             }
         }
 
-        // Also add minutos_domingos to 11502 (RECARGO FESTIVO DIURNO)
         for (const j of jornadas ?? []) {
-            const r = j as Record<string, unknown>
-            const cedula = r.empleado_id as string
-            const mins = (r.minutos_domingos as number) ?? 0
+            const cedula = j.empleado_id as string
+            const mins = (j.minutos_domingos as number) ?? 0
             if (mins <= 0) continue
             const key = `${cedula}::11502`
             agg.set(key, (agg.get(key) ?? 0) + mins)

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server'
+import { getD1 } from '@/lib/d1/client'
 
 // ==================================================
 // CACHÉ DE DÍAS FESTIVOS (24h TTL por año)
@@ -148,17 +148,14 @@ export async function obtenerTarifas(): Promise<Record<string, number>> {
     }
 
     try {
-        const supabase = await createClient()
-        const { data, error } = await supabase
-            .from('tarifas')
-            .select('tipo_hora, precio_por_hora')
-            .eq('activo', true)
-
-        if (error) throw error
+        const db = getD1()
+        const { results } = await db
+            .prepare('SELECT tipo_hora, precio_por_hora FROM tarifas WHERE activo = 1')
+            .all()
 
         const tarifas: Record<string, number> = {}
-        data.forEach((row) => {
-            tarifas[row.tipo_hora] = parseFloat(row.precio_por_hora)
+        ;(results as { tipo_hora: string; precio_por_hora: number }[]).forEach((row) => {
+            tarifas[row.tipo_hora] = Number(row.precio_por_hora)
         })
 
         cacheTarifas = tarifas

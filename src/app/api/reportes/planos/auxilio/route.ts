@@ -1,17 +1,12 @@
-import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 import { generarPlanoAuxilio, type NovedadAuxilio } from '@/lib/excel/planos/auxilio'
+import { getD1 } from '@/lib/d1/client'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: NextRequest) {
     try {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-        const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-        if (!supabaseUrl || !supabaseServiceKey) {
-            return NextResponse.json({ error: 'Config error' }, { status: 500 })
-        }
-        const supabase = createClient(supabaseUrl, supabaseServiceKey)
+        const db = getD1()
 
         const { searchParams } = new URL(request.url)
         const anio = parseInt(searchParams.get('anio') ?? '')
@@ -31,21 +26,19 @@ export async function GET(request: NextRequest) {
         const start = `${anio}-${pad(mes)}-${quincena === 1 ? '01' : '16'}`
         const end = `${anio}-${pad(mes)}-${quincena === 1 ? '15' : pad(lastDay)}`
 
-        const { data: novedades, error } = await supabase
-            .from('novedades')
-            .select('usuario_id, valor_monetario')
-            .eq('tipo_novedad', 'AUXILIO_NO_PRESTACIONAL')
-            .gte('fecha_novedad', start)
-            .lte('fecha_novedad', end)
-            .order('fecha_novedad', { ascending: true })
+        const { results: novedades } = await db
+            .prepare(
+                `SELECT usuario_id, valor_monetario FROM novedades
+                 WHERE tipo_novedad = 'AUXILIO_NO_PRESTACIONAL'
+                 AND fecha_novedad >= ? AND fecha_novedad <= ?
+                 ORDER BY fecha_novedad ASC`,
+            )
+            .bind(start, end)
+            .all()
 
-        if (error) {
-            return NextResponse.json({ error: error.message }, { status: 500 })
-        }
-
-        const datos: NovedadAuxilio[] = (novedades ?? []).map((n) => ({
-            cedula: n.usuario_id,
-            valor: n.valor_monetario ?? 0,
+        const datos: NovedadAuxilio[] = ((novedades ?? []) as Record<string, unknown>[]).map((n: Record<string, unknown>) => ({
+            cedula: n.usuario_id as string,
+            valor: (n.valor_monetario as number) ?? 0,
         }))
 
         const periodo = { anio, mes, quincena }
