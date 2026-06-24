@@ -2,12 +2,13 @@
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
 
 name = "inlotrans-asistencia"
+main = "worker.ts"
 compatibility_date = "2025-06-01"
-compatibility_flags = ["nodejs_compat"]
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
 
-# ─── Pages / Next.js (via @opennextjs/cloudflare) ─────────────
-# The actual deployment is handled by the OpenNext adapter.
-# This config defines the bindings available to the Worker.
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
 
 # ─── D1 Database ──────────────────────────────────────────────
 [[d1_databases]]
