@@ -2,7 +2,8 @@
 
 import { getD1 } from '@/lib/d1/client'
 import { revalidatePath } from 'next/cache'
-import { getUserProfile, requireAdminOrCoordinador } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdminOrCoordinador } from '@/lib/auth-helpers'
 
 export async function crearEmpleado(formData: FormData) {
     const profile = await getUserProfile()

@@ -2,7 +2,8 @@
 
 import { getD1, generateId } from '@/lib/d1/client'
 import { revalidatePath } from 'next/cache'
-import { getUserProfile, requireAdmin, requireAdminOrCoordinador } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdmin, requireAdminOrCoordinador } from '@/lib/auth-helpers'
 import { registrarCompensaTiempo } from '@/lib/jornadas'
 import { redondearMediaHora } from '@/lib/calculoHoras'
 

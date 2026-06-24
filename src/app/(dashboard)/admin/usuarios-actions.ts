@@ -1,7 +1,8 @@
 'use server'
 
 import { getD1, generateId } from '@/lib/d1/client'
-import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth-helpers'
 import { hashPassword } from '@/lib/auth/password'
 import { revalidatePath } from 'next/cache'
 

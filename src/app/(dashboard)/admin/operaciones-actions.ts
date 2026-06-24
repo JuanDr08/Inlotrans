@@ -2,7 +2,8 @@
 
 import { getD1, generateId } from '@/lib/d1/client'
 import { unstable_cache } from 'next/cache'
-import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth-helpers'
 
 export type Operacion = {
     id: string

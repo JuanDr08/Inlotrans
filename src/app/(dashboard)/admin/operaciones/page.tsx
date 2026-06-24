@@ -1,6 +1,7 @@
 import { getOperacionesAdmin } from '../operaciones-actions'
 import { OperacionesClient } from './OperacionesClient'
-import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth-helpers'
 import { redirect } from 'next/navigation'
 
 export const metadata = {

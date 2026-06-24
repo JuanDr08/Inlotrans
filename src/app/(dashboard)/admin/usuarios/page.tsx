@@ -1,4 +1,5 @@
-import { getUserProfile, requireAdmin } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdmin } from '@/lib/auth-helpers'
 import { redirect } from 'next/navigation'
 import { listarUsuarios } from '../usuarios-actions'
 import { getOperacionesAdmin } from '../operaciones-actions'

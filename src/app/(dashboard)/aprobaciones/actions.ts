@@ -1,7 +1,8 @@
 'use server'
 
 import { getD1 } from '@/lib/d1/client'
-import { getUserProfile, requireAdminOrCoordinador, getOperationFilter } from '@/lib/auth'
+import { getUserProfile } from '@/lib/auth'
+import { requireAdminOrCoordinador, getOperationFilter } from '@/lib/auth-helpers'
 import { revalidatePath } from 'next/cache'
 
 export async function getAprobacionesPendientes() {
