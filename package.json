@@ -10,12 +10,13 @@
     "migrate:prod-to-dev": "tsx scripts/migrate-prod-to-dev.ts"
   },
   "dependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "exceljs": "^4.4.0",
     "lucide-react": "^0.575.0",
-    "next": "16.1.6",
+    "next": "^16.2.9",
     "next-themes": "^0.4.6",
     "radix-ui": "^1.4.3",
     "react": "19.2.3",
@@ -25,13 +26,14 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260623.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv": "^17.4.2",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "^16.2.9",
     "shadcn": "^4.2.0",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",

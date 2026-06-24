@@ -13,12 +13,12 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "inlotrans-asistencia-db"
-database_id = ""  # Fill after: wrangler d1 create inlotrans-asistencia-db
+database_id = "8ccfe4d3-05f6-4d21-a654-1b2c4ac0b3da"  # Fill after: wrangler d1 create inlotrans-asistencia-db
 
 # ─── KV Namespace (caches: festivos, tarifas) ────────────────
 [[kv_namespaces]]
 binding = "CACHE"
-id = ""  # Fill after: wrangler kv namespace create CACHE
+id = "b995e579dafa4b4b88f301f612505b99"  # Fill after: wrangler kv namespace create CACHE
 
 # ─── Cron Triggers ────────────────────────────────────────────
 [triggers]
