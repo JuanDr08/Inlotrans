@@ -635,12 +635,12 @@ function CumplimientoDominical({
                             Semana del {fechaSoloFecha(semana.semana_inicio)} al {fechaSoloFecha(semana.semana_fin)}
                         </p>
                     </div>
-                    {semana.paga_domingo === true && (
+                    {!!semana.paga_domingo && (
                         <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1 px-3 py-1">
                             <CheckCircle2 className="h-3 w-3" /> Paga domingo
                         </Badge>
                     )}
-                    {semana.paga_domingo === false && (
+                    {!semana.paga_domingo && (
                         <Badge className="bg-red-100 text-red-700 hover:bg-red-100 gap-1 px-3 py-1">
                             <XCircle className="h-3 w-3" /> No paga domingo
                         </Badge>

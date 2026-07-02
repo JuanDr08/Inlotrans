@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "migrate:prod-to-dev": "tsx scripts/migrate-prod-to-dev.ts"
+    "migrate:prod-to-dev": "tsx scripts/migrate-prod-to-dev.ts",
+    "migrate:supabase-to-d1": "tsx scripts/migrate-supabase-to-d1.ts"
   },
   "dependencies": {
     "@opennextjs/cloudflare": "^1.19.11",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260623.1",
+    "@supabase/supabase-js": "^2.110.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

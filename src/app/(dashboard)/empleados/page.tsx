@@ -8,23 +8,46 @@ import { getOperacionesAdmin } from '../admin/operaciones-actions'
 import { getUserProfile } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 
-export default async function EmpleadosPage() {
+const PAGE_SIZE = 10
+
+export default async function EmpleadosPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ page?: string }>
+}) {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
+
+    const pParams = await searchParams
+    const page = Math.max(1, parseInt(pParams.page ?? '1', 10) || 1)
+    const offset = (page - 1) * PAGE_SIZE
 
     const db = getD1()
 
     let empleados
+    let total = 0
     if (profile.rol === 'coordinador' && profile.operacion_nombre) {
-        const { results } = await db.prepare(
-            'SELECT * FROM usuarios WHERE operacion = ? ORDER BY nombre ASC'
-        ).bind(profile.operacion_nombre).all()
+        const [{ results }, countRow] = await Promise.all([
+            db.prepare(
+                'SELECT id, nombre, cargo, operacion, status, salario FROM usuarios WHERE operacion = ? ORDER BY nombre ASC LIMIT ? OFFSET ?'
+            ).bind(profile.operacion_nombre, PAGE_SIZE, offset).all(),
+            db.prepare(
+                'SELECT COUNT(*) as total FROM usuarios WHERE operacion = ?'
+            ).bind(profile.operacion_nombre).first<{ total: number }>(),
+        ])
         empleados = results
+        total = countRow?.total ?? 0
     } else {
-        const { results } = await db.prepare(
-            'SELECT * FROM usuarios ORDER BY nombre ASC'
-        ).all()
+        const [{ results }, countRow] = await Promise.all([
+            db.prepare(
+                'SELECT id, nombre, cargo, operacion, status, salario FROM usuarios ORDER BY nombre ASC LIMIT ? OFFSET ?'
+            ).bind(PAGE_SIZE, offset).all(),
+            db.prepare(
+                'SELECT COUNT(*) as total FROM usuarios'
+            ).first<{ total: number }>(),
+        ])
         empleados = results
+        total = countRow?.total ?? 0
     }
 
     const resOps = await getOperacionesAdmin()
@@ -59,13 +82,16 @@ export default async function EmpleadosPage() {
                 <div className="col-span-1 lg:col-span-2">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Usuarios Registrados ({empleados?.length || 0})</CardTitle>
+                            <CardTitle>Usuarios Registrados ({total})</CardTitle>
                         </CardHeader>
                         <CardContent>
                             <EmpleadosTable
                                 empleados={empleados || []}
                                 operaciones={operaciones}
                                 rol={profile.rol}
+                                total={total}
+                                page={page}
+                                pageSize={PAGE_SIZE}
                             />
                         </CardContent>
                     </Card>

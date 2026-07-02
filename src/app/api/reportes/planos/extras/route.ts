@@ -42,7 +42,13 @@ export async function GET(request: NextRequest) {
         endUTC.setUTCDate(endUTC.getUTCDate() + 1)
 
         const { results: aprobaciones } = await db
-            .prepare("SELECT jornada_id FROM aprobaciones_extras WHERE estado = 'APROBADA'")
+            .prepare(
+                `SELECT ae.jornada_id FROM aprobaciones_extras ae
+                 INNER JOIN jornadas j ON j.id = ae.jornada_id
+                 WHERE ae.estado = 'APROBADA'
+                 AND j.entrada >= ? AND j.entrada < ?`,
+            )
+            .bind(startUTC.toISOString(), endUTC.toISOString())
             .all()
 
         const jornadaIdsAprobadas = new Set(

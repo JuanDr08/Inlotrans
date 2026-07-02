@@ -193,25 +193,30 @@ export async function GET(request: NextRequest) {
         }
 
         // ─── 5. Días con novedad pero sin jornada ───────────────
+        const cedulasSinJornada = new Set<string>()
+        for (const key of novedadIndex.keys()) {
+            if (!empleadosConJornada.has(key)) cedulasSinJornada.add(key.split('::')[0])
+        }
+
+        const usuarioCache = new Map<string, Record<string, unknown>>()
+        if (cedulasSinJornada.size > 0) {
+            const placeholders = [...cedulasSinJornada].map(() => '?').join(', ')
+            const { results: usuarios } = await db
+                .prepare(`SELECT id, nombre, cargo, operacion FROM usuarios WHERE id IN (${placeholders})`)
+                .bind(...cedulasSinJornada)
+                .all()
+            for (const u of usuarios ?? []) usuarioCache.set(u.id as string, u)
+        }
+
         for (const [key, novs] of novedadIndex) {
             if (empleadosConJornada.has(key)) continue
 
             const [cedula, fecha] = key.split('::')
-            const usuario = await db
-                .prepare('SELECT id, nombre, cargo, operacion FROM usuarios WHERE id = ?')
-                .bind(cedula)
-                .first()
+            const usuario = usuarioCache.get(cedula)
 
             if (!usuario) continue
 
-            let opCodigo = ''
-            if (usuario.operacion) {
-                const op = await db
-                    .prepare('SELECT codigo FROM operaciones WHERE nombre = ?')
-                    .bind(usuario.operacion)
-                    .first()
-                opCodigo = (op?.codigo as string) ?? ''
-            }
+            const opCodigo = opCodigoMap.get(usuario.operacion as string) ?? ''
 
             const [y, m, d] = fecha.split('-').map(Number)
             const fakeDateParts = `${DIAS_SEMANA[new Date(y, m - 1, d).getDay()]}, ${MESES[m - 1]} ${String(d).padStart(2, '0')}, ${y}`

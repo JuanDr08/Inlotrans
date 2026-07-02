@@ -39,9 +39,8 @@ export interface ResumenEmpleadoPeriodo {
     valorTotal: number
 }
 
-type JornadaSnapshot = {
-    empleado_id: string
-    operacion: string
+/** Fila agregada por SQL (SUM de todas las jornadas de un empleado en el período). */
+type JornadaAgregado = {
     minutos_normales: number
     minutos_nocturnas: number
     minutos_domingos: number
@@ -52,6 +51,12 @@ type JornadaSnapshot = {
     minutos_extras_dominical_festivo: number
     minutos_extras_nocturna_dominical_festivo: number
     minutos_total: number
+}
+
+/** Fila agregada por SQL con GROUP BY empleado_id — incluye identidad del empleado. */
+type JornadaAgregadoPorEmpleado = JornadaAgregado & {
+    empleado_id: string
+    operacion: string
     usuario_nombre?: string
 }
 
@@ -69,17 +74,17 @@ function acumuladorVacio(): DetalleMinutos {
     }
 }
 
-function sumarJornada(acum: DetalleMinutos, j: JornadaSnapshot): DetalleMinutos {
+function mapAgregadoADetalle(a: JornadaAgregado): DetalleMinutos {
     return {
-        normales:                       acum.normales + j.minutos_normales,
-        nocturnas:                      acum.nocturnas + j.minutos_nocturnas,
-        domingos:                       acum.domingos + j.minutos_domingos,
-        festivos:                       acum.festivos + j.minutos_festivos,
-        domingosFestivosNocturnos:      acum.domingosFestivosNocturnos + j.minutos_domingos_festivos_nocturnos,
-        extrasOrdinarias:               acum.extrasOrdinarias + j.minutos_extras_ordinarias,
-        extrasNocturnas:                acum.extrasNocturnas + j.minutos_extras_nocturnas,
-        extrasDominicalFestivo:         acum.extrasDominicalFestivo + j.minutos_extras_dominical_festivo,
-        extrasNocturnaDominicalFestivo: acum.extrasNocturnaDominicalFestivo + j.minutos_extras_nocturna_dominical_festivo,
+        normales:                       a.minutos_normales,
+        nocturnas:                      a.minutos_nocturnas,
+        domingos:                       a.minutos_domingos,
+        festivos:                       a.minutos_festivos,
+        domingosFestivosNocturnos:      a.minutos_domingos_festivos_nocturnos,
+        extrasOrdinarias:               a.minutos_extras_ordinarias,
+        extrasNocturnas:                a.minutos_extras_nocturnas,
+        extrasDominicalFestivo:         a.minutos_extras_dominical_festivo,
+        extrasNocturnaDominicalFestivo: a.minutos_extras_nocturna_dominical_festivo,
     }
 }
 
@@ -130,15 +135,22 @@ export async function calcularHorasUsuarioEnPeriodo(
 ): Promise<ResumenEmpleadoPeriodo | null> {
     const db = getD1()
 
-    const [usuario, jornadasResult] = await Promise.all([
+    const [usuario, agregado] = await Promise.all([
         db.prepare('SELECT id, nombre, operacion FROM usuarios WHERE id = ?')
             .bind(cedula)
             .first<{ id: string; nombre: string; operacion: string | null }>(),
         db.prepare(
-            `SELECT empleado_id, operacion, minutos_normales, minutos_nocturnas, minutos_domingos,
-                    minutos_festivos, minutos_domingos_festivos_nocturnos, minutos_extras_ordinarias,
-                    minutos_extras_nocturnas, minutos_extras_dominical_festivo,
-                    minutos_extras_nocturna_dominical_festivo, minutos_total
+            `SELECT
+                    COALESCE(SUM(minutos_normales), 0) as minutos_normales,
+                    COALESCE(SUM(minutos_nocturnas), 0) as minutos_nocturnas,
+                    COALESCE(SUM(minutos_domingos), 0) as minutos_domingos,
+                    COALESCE(SUM(minutos_festivos), 0) as minutos_festivos,
+                    COALESCE(SUM(minutos_domingos_festivos_nocturnos), 0) as minutos_domingos_festivos_nocturnos,
+                    COALESCE(SUM(minutos_extras_ordinarias), 0) as minutos_extras_ordinarias,
+                    COALESCE(SUM(minutos_extras_nocturnas), 0) as minutos_extras_nocturnas,
+                    COALESCE(SUM(minutos_extras_dominical_festivo), 0) as minutos_extras_dominical_festivo,
+                    COALESCE(SUM(minutos_extras_nocturna_dominical_festivo), 0) as minutos_extras_nocturna_dominical_festivo,
+                    COALESCE(SUM(minutos_total), 0) as minutos_total
              FROM jornadas
              WHERE empleado_id = ?
                AND estado IN ('CERRADO', 'CERRADO_MANUAL')
@@ -146,16 +158,12 @@ export async function calcularHorasUsuarioEnPeriodo(
                AND entrada <= ?`,
         )
             .bind(cedula, fechaInicio.toISOString(), fechaFin.toISOString())
-            .all(),
+            .first<JornadaAgregado>(),
     ])
 
     if (!usuario) return null
 
-    const jornadas = jornadasResult.results as JornadaSnapshot[]
-    const detalle = jornadas.reduce<DetalleMinutos>(
-        (acc, j) => sumarJornada(acc, j),
-        acumuladorVacio(),
-    )
+    const detalle = agregado ? mapAgregadoADetalle(agregado) : acumuladorVacio()
     const total = totalMinutos(detalle)
     const tarifas = await obtenerTarifas()
     const { valores, total: valorTotal } = calcularValores(detalle, tarifas)
@@ -178,68 +186,84 @@ export async function calcularHorasUsuarioEnPeriodo(
 /**
  * Resumen agregado de todos los empleados con jornadas cerradas en el período.
  * Filtra por array de operaciones si se provee.
+ * Acepta `limit`/`offset` opcionales para paginación — cuando se proveen,
+ * también retorna el total de empleados distintos que matchean el filtro.
  */
 export async function calcularHorasTodosEnPeriodo(
     fechaInicio: Date,
     fechaFin: Date,
     operaciones: string[] = [],
-): Promise<ResumenEmpleadoPeriodo[]> {
+    limit?: number,
+    offset?: number,
+): Promise<{ data: ResumenEmpleadoPeriodo[]; total: number }> {
     const db = getD1()
 
-    // Build query with optional operaciones filter
+    // Build query with optional operaciones filter — aggregation happens in SQL
     let sql = `
-        SELECT j.empleado_id, j.operacion,
-               j.minutos_normales, j.minutos_nocturnas, j.minutos_domingos,
-               j.minutos_festivos, j.minutos_domingos_festivos_nocturnos,
-               j.minutos_extras_ordinarias, j.minutos_extras_nocturnas,
-               j.minutos_extras_dominical_festivo, j.minutos_extras_nocturna_dominical_festivo,
-               j.minutos_total, u.nombre AS usuario_nombre
+        SELECT j.empleado_id, j.operacion, u.nombre AS usuario_nombre,
+               SUM(j.minutos_normales) as minutos_normales,
+               SUM(j.minutos_nocturnas) as minutos_nocturnas,
+               SUM(j.minutos_domingos) as minutos_domingos,
+               SUM(j.minutos_festivos) as minutos_festivos,
+               SUM(j.minutos_domingos_festivos_nocturnos) as minutos_domingos_festivos_nocturnos,
+               SUM(j.minutos_extras_ordinarias) as minutos_extras_ordinarias,
+               SUM(j.minutos_extras_nocturnas) as minutos_extras_nocturnas,
+               SUM(j.minutos_extras_dominical_festivo) as minutos_extras_dominical_festivo,
+               SUM(j.minutos_extras_nocturna_dominical_festivo) as minutos_extras_nocturna_dominical_festivo,
+               SUM(j.minutos_total) as minutos_total
         FROM jornadas j
         INNER JOIN usuarios u ON u.id = j.empleado_id
         WHERE j.estado IN ('CERRADO', 'CERRADO_MANUAL')
           AND j.entrada >= ?
           AND j.entrada <= ?`
 
+    let countSql = `
+        SELECT COUNT(DISTINCT j.empleado_id) as total
+        FROM jornadas j
+        WHERE j.estado IN ('CERRADO', 'CERRADO_MANUAL')
+          AND j.entrada >= ?
+          AND j.entrada <= ?`
+
     const params: unknown[] = [fechaInicio.toISOString(), fechaFin.toISOString()]
+    const countParams: unknown[] = [fechaInicio.toISOString(), fechaFin.toISOString()]
 
     if (operaciones.length > 0) {
         const placeholders = operaciones.map(() => '?').join(', ')
         sql += ` AND j.operacion IN (${placeholders})`
+        countSql += ` AND j.operacion IN (${placeholders})`
         params.push(...operaciones)
+        countParams.push(...operaciones)
     }
 
-    const { results } = await db.prepare(sql).bind(...params).all()
-    if (!results || results.length === 0) return []
+    sql += ` GROUP BY j.empleado_id, j.operacion, u.nombre`
+    sql += ` ORDER BY u.nombre ASC`
 
-    // Agrupar por empleado_id
-    const acumuladorPorEmpleado = new Map<
-        string,
-        { detalle: DetalleMinutos; nombre: string; operacion: string }
-    >()
-    for (const row of results) {
-        const r = row as JornadaSnapshot
-        const ref = acumuladorPorEmpleado.get(r.empleado_id)
-        if (ref) {
-            ref.detalle = sumarJornada(ref.detalle, r)
-        } else {
-            acumuladorPorEmpleado.set(r.empleado_id, {
-                detalle: sumarJornada(acumuladorVacio(), r),
-                nombre: r.usuario_nombre ?? '',
-                operacion: r.operacion,
-            })
-        }
+    if (limit !== undefined) {
+        sql += ` LIMIT ? OFFSET ?`
+        params.push(limit, offset ?? 0)
     }
+
+    const [{ results }, countRow] = await Promise.all([
+        db.prepare(sql).bind(...params).all(),
+        db.prepare(countSql).bind(...countParams).first<{ total: number }>(),
+    ])
+
+    const total = countRow?.total ?? 0
+
+    if (!results || results.length === 0) return { data: [], total }
 
     const tarifas = await obtenerTarifas()
     const resultados: ResumenEmpleadoPeriodo[] = []
 
-    for (const [cedula, { detalle, nombre, operacion }] of acumuladorPorEmpleado) {
+    for (const row of results) {
+        const r = row as JornadaAgregadoPorEmpleado
+        const detalle = mapAgregadoADetalle(r)
         const total = totalMinutos(detalle)
         const { valores, total: valorTotal } = calcularValores(detalle, tarifas)
         resultados.push({
-            cedula,
-            nombre,
-            operacion,
+            cedula: r.empleado_id,
+            nombre: r.usuario_nombre ?? '',
+            operacion: r.operacion,
             periodo: { inicio: fechaInicio.toISOString(), fin: fechaFin.toISOString() },
             totalMinutos: total,
             horasTotales: minutosAHoras(total),
@@ -251,5 +275,5 @@ export async function calcularHorasTodosEnPeriodo(
         })
     }
 
-    return resultados
+    return { data: resultados, total }
 }

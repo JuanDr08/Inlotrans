@@ -20,15 +20,22 @@ import { editarEmpleado, cambiarEstadoEmpleado } from './actions'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Pagination } from '@/components/Pagination'
 
 export function EmpleadosTable({
     empleados,
     operaciones,
-    rol
+    rol,
+    total,
+    page,
+    pageSize
 }: {
     empleados: any[],
     operaciones: { id: string, nombre: string }[],
-    rol: string
+    rol: string,
+    total: number,
+    page: number,
+    pageSize: number
 }) {
     const router = useRouter()
     const [editingEmp, setEditingEmp] = useState<any>(null)
@@ -178,6 +185,9 @@ export function EmpleadosTable({
                     ))}
                 </TableBody>
             </Table>
+            </div>
+
+            <Pagination page={page} pageSize={pageSize} total={total} />
 
             <Dialog open={!!editingEmp} onOpenChange={(open) => !open && setEditingEmp(null)}>
                 <DialogContent className="sm:max-w-md">
@@ -251,7 +261,6 @@ export function EmpleadosTable({
                     )}
                 </DialogContent>
             </Dialog>
-        </div>
         </div>
     )
 }

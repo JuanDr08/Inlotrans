@@ -12,25 +12,60 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { NovedadesForm } from './NovedadesForm'
 import { DeleteNovedadButton } from './DeleteNovedadButton'
+import { Pagination } from '@/components/Pagination'
 import Link from 'next/link'
 import { getUserProfile } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 
-export default async function NovedadesPage() {
+const PAGE_SIZE = 10
+
+export default async function NovedadesPage({
+    searchParams,
+}: {
+    searchParams: Promise<{ page?: string }>
+}) {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
 
+    const pParams = await searchParams
+    const page = Math.max(1, parseInt(pParams.page ?? '1', 10) || 1)
+    const offset = (page - 1) * PAGE_SIZE
+
     const db = getD1()
 
-    const { results: novedadesRaw } = await db.prepare(
-        `SELECT n.id, n.usuario_id, n.usuario_nombre, n.tipo_novedad,
+    const isCoordinador = profile.rol === 'coordinador' && profile.operacion_nombre
+
+    const baseWhere = `WHERE n.fecha_novedad >= date('now', '-90 days')`
+    const opFilter = isCoordinador ? ` AND u.operacion = ?` : ''
+
+    const listParams: unknown[] = []
+    if (isCoordinador) listParams.push(profile.operacion_nombre)
+    listParams.push(PAGE_SIZE, offset)
+
+    const countParams: unknown[] = []
+    if (isCoordinador) countParams.push(profile.operacion_nombre)
+
+    const [{ results: novedadesRaw }, countRow] = await Promise.all([
+        db.prepare(
+            `SELECT n.id, n.usuario_id, n.usuario_nombre, n.tipo_novedad,
                 n.fecha_novedad, n.fecha_inicio, n.fecha_fin,
                 n.es_pagado, n.codigo_causa, n.valor_monetario, n.descripcion, n.created_at,
                 u.nombre as usuario_real_nombre, u.operacion as usuario_operacion
          FROM novedades n
          LEFT JOIN usuarios u ON u.id = n.usuario_id
-         ORDER BY n.fecha_novedad DESC`
-    ).all()
+         ${baseWhere}${opFilter}
+         ORDER BY n.fecha_novedad DESC
+         LIMIT ? OFFSET ?`
+        ).bind(...listParams).all(),
+        db.prepare(
+            `SELECT COUNT(*) as total
+         FROM novedades n
+         LEFT JOIN usuarios u ON u.id = n.usuario_id
+         ${baseWhere}${opFilter}`
+        ).bind(...countParams).first<{ total: number }>(),
+    ])
+
+    const total = countRow?.total ?? 0
 
     type NovedadRow = {
         id: string
@@ -50,7 +85,7 @@ export default async function NovedadesPage() {
 
     const rawRows = (novedadesRaw ?? []) as unknown as NovedadRow[]
 
-    const mapped = rawRows.map(r => ({
+    const novedades = rawRows.map(r => ({
         id: r.id,
         usuario_id: r.usuario_id,
         usuario_nombre: r.usuario_nombre,
@@ -66,13 +101,6 @@ export default async function NovedadesPage() {
             ? { nombre: r.usuario_real_nombre, operacion: r.usuario_operacion ?? undefined }
             : undefined,
     }))
-
-    let novedades = mapped
-    if (profile.rol === 'coordinador') {
-        novedades = novedades.filter((n) => {
-            return n.usuario?.operacion === profile.operacion_nombre
-        })
-    }
 
     return (
         <div className="space-y-6">
@@ -96,7 +124,7 @@ export default async function NovedadesPage() {
                 <div className="col-span-1 lg:col-span-2">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Historial de Novedades ({novedades?.length || 0})</CardTitle>
+                            <CardTitle>Historial de Novedades ({total})</CardTitle>
                         </CardHeader>
                         <CardContent>
                             <div className="rounded-md border overflow-x-auto">
@@ -178,6 +206,8 @@ export default async function NovedadesPage() {
                                     </TableBody>
                                 </Table>
                             </div>
+
+                            <Pagination page={page} pageSize={PAGE_SIZE} total={total} />
                         </CardContent>
                     </Card>
                 </div>

@@ -12,12 +12,14 @@ import {
 } from '@/components/ui/table'
 import { CalendarRange, Inbox } from 'lucide-react'
 import type { ResumenEmpleadoPeriodo } from '@/lib/reportes'
+import { Pagination } from '@/components/Pagination'
 
 interface Grupo {
     nombre: string
     startString: string
     endString: string
     datos: ResumenEmpleadoPeriodo[]
+    total: number
 }
 
 const BADGE_TIPOS: { key: string; label: string; cls: string }[] = [
@@ -35,7 +37,15 @@ function fmtCOP(n: number): string {
     return `$${Math.round(n).toLocaleString('es-CO')}`
 }
 
-export function AdminTablesClient({ grupos }: { grupos: Grupo[] }) {
+export function AdminTablesClient({
+    grupos,
+    page,
+    pageSize,
+}: {
+    grupos: Grupo[]
+    page: number
+    pageSize: number
+}) {
     if (grupos.length === 0) {
         return (
             <Card>
@@ -135,6 +145,11 @@ export function AdminTablesClient({ grupos }: { grupos: Grupo[] }) {
                                         ))}
                                     </TableBody>
                                 </Table>
+                            </div>
+                        )}
+                        {grupo.datos.length > 0 && (
+                            <div className="px-5 pb-4">
+                                <Pagination page={page} pageSize={pageSize} total={grupo.total} />
                             </div>
                         )}
                     </CardContent>

@@ -1,4 +1,4 @@
-import { getD1, generateId } from '@/lib/d1/client'
+import { getD1, getKV, generateId } from '@/lib/d1/client'
 import {
     calcularPeriodosHorasOptimizado,
     obtenerFestivosParaRango,
@@ -60,6 +60,8 @@ export interface SnapshotMinutos {
 }
 
 type Resultado<T> = { data: T | null; error: string | null }
+
+const KV_CONFIG_OPERACION_TTL = 300 // 5 min in seconds
 
 // ==================================================
 // HELPERS
@@ -136,14 +138,24 @@ async function obtenerConfigOperacion(
     db: any,
     nombre: string,
 ): Promise<{ limite_horas: number; minutos_almuerzo: number }> {
+    const kv = getKV()
+    const kvKey = `config:operacion:${nombre}`
+
+    const cached = await kv.get(kvKey, 'json') as { limite_horas: number; minutos_almuerzo: number } | null
+    if (cached) return cached
+
     const data = await db
         .prepare('SELECT limite_horas, minutos_almuerzo FROM operaciones WHERE nombre = ?')
         .bind(nombre)
         .first() as { limite_horas: number; minutos_almuerzo: number } | null
-    return {
+
+    const config = {
         limite_horas: data?.limite_horas ?? 8,
         minutos_almuerzo: data?.minutos_almuerzo ?? 0,
     }
+
+    await kv.put(kvKey, JSON.stringify(config), { expirationTtl: KV_CONFIG_OPERACION_TTL })
+    return config
 }
 
 async function obtenerSaldoBolsa(
@@ -210,21 +222,16 @@ async function hayNovedadRemuneradaParaFecha(
     empleadoId: string,
     fechaJornada: string,
 ): Promise<boolean> {
-    const puntual = await db
+    const data = await db
         .prepare(
-            'SELECT id FROM novedades WHERE usuario_id = ? AND es_pagado = 1 AND fecha_novedad = ? LIMIT 1',
+            `SELECT id FROM novedades
+             WHERE usuario_id = ? AND es_pagado = 1
+               AND (fecha_novedad = ? OR (fecha_inicio <= ? AND fecha_fin >= ?))
+             LIMIT 1`,
         )
-        .bind(empleadoId, fechaJornada)
+        .bind(empleadoId, fechaJornada, fechaJornada, fechaJornada)
         .first() as { id: string } | null
-    if (puntual) return true
-
-    const rango = await db
-        .prepare(
-            'SELECT id FROM novedades WHERE usuario_id = ? AND es_pagado = 1 AND fecha_inicio <= ? AND fecha_fin >= ? LIMIT 1',
-        )
-        .bind(empleadoId, fechaJornada, fechaJornada)
-        .first() as { id: string } | null
-    return !!rango
+    return !!data
 }
 
 function fechaColombiaYYYYMMDD(fechaUTC: Date): string {
@@ -263,12 +270,31 @@ export async function abrirJornada(
         .bind(id, cedula, operacion, ahora, ahora, ahora)
         .run()
 
-    const data = await db
-        .prepare('SELECT * FROM jornadas WHERE id = ?')
-        .bind(id)
-        .first() as Jornada | null
+    const data: Jornada = {
+        id,
+        empleado_id: cedula,
+        operacion,
+        entrada: ahora,
+        salida: null,
+        estado: 'ABIERTO',
+        minutos_normales: 0,
+        minutos_nocturnas: 0,
+        minutos_domingos: 0,
+        minutos_festivos: 0,
+        minutos_domingos_festivos_nocturnos: 0,
+        minutos_extras_ordinarias: 0,
+        minutos_extras_nocturnas: 0,
+        minutos_extras_dominical_festivo: 0,
+        minutos_extras_nocturna_dominical_festivo: 0,
+        minutos_total: 0,
+        minutos_almuerzo_descontados: 0,
+        cerrada_por: null,
+        hora_salida_manual: null,
+        alerta_critica: false,
+        created_at: ahora,
+        updated_at: ahora,
+    }
 
-    if (!data) return { data: null, error: 'Error al crear la jornada.' }
     return { data, error: null }
 }
 
@@ -405,12 +431,30 @@ async function liquidarJornada(
         )
         .run()
 
-    const jornadaActualizada = await db
-        .prepare('SELECT * FROM jornadas WHERE id = ?')
-        .bind(args.jornada.id)
-        .first() as Jornada | null
-
-    if (!jornadaActualizada) throw new Error('Error al actualizar la jornada.')
+    const jornadaActualizada: Jornada = {
+        id: args.jornada.id,
+        empleado_id: args.jornada.empleado_id,
+        operacion: args.jornada.operacion,
+        entrada: args.jornada.entrada,
+        salida: args.salida.toISOString(),
+        estado: args.estadoFinal,
+        minutos_normales: args.snapshot.minutos_normales,
+        minutos_nocturnas: args.snapshot.minutos_nocturnas,
+        minutos_domingos: args.snapshot.minutos_domingos,
+        minutos_festivos: args.snapshot.minutos_festivos,
+        minutos_domingos_festivos_nocturnos: args.snapshot.minutos_domingos_festivos_nocturnos,
+        minutos_extras_ordinarias: args.snapshot.minutos_extras_ordinarias,
+        minutos_extras_nocturnas: args.snapshot.minutos_extras_nocturnas,
+        minutos_extras_dominical_festivo: args.snapshot.minutos_extras_dominical_festivo,
+        minutos_extras_nocturna_dominical_festivo: args.snapshot.minutos_extras_nocturna_dominical_festivo,
+        minutos_total: args.snapshot.minutos_total,
+        minutos_almuerzo_descontados: args.snapshot.minutos_almuerzo_descontados,
+        cerrada_por: args.cerradaPor,
+        hora_salida_manual: horaSalidaManual,
+        alerta_critica: alertaCritica,
+        created_at: args.jornada.created_at,
+        updated_at: ahora,
+    }
 
     // 2. Alerta crítica si >12h
     if (alertaCritica) {
@@ -504,7 +548,7 @@ async function liquidarJornada(
         }
     }
 
-    return jornadaActualizada as Jornada
+    return jornadaActualizada
 }
 
 // ==================================================

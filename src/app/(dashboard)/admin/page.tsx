@@ -16,7 +16,10 @@ interface GrupoConDatos extends Omit<Grupo, 'start' | 'end'> {
     startString: string
     endString: string
     datos: ResumenEmpleadoPeriodo[]
+    total: number
 }
+
+const PAGE_SIZE = 10
 
 export default async function AdminPage({
     searchParams,
@@ -28,12 +31,15 @@ export default async function AdminPage({
         mes?: string
         anio?: string
         periodo?: string
+        page?: string
     }>
 }) {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
 
     const pParams = await searchParams
+    const page = Math.max(1, parseInt(pParams.page ?? '1', 10) || 1)
+    const offset = (page - 1) * PAGE_SIZE
     const grupos: Grupo[] = []
 
     if (pParams.periodo === 'personalizado' && pParams.start && pParams.end) {
@@ -71,17 +77,24 @@ export default async function AdminPage({
 
     const gruposConDatos: GrupoConDatos[] = await Promise.all(
         grupos.map(async (g) => {
-            const datos = await calcularHorasTodosEnPeriodo(g.start, g.end, operaciones)
+            const { data: datos, total } = await calcularHorasTodosEnPeriodo(
+                g.start,
+                g.end,
+                operaciones,
+                PAGE_SIZE,
+                offset,
+            )
             return {
                 nombre: g.nombre,
                 startString: g.start.toLocaleDateString('es-CO'),
                 endString: g.end.toLocaleDateString('es-CO'),
                 datos,
+                total,
             }
         }),
     )
 
-    // Totales agregados del período completo (todos los grupos sumados)
+    // Totales agregados del período completo (todos los grupos sumados) — página actual
     const totales = gruposConDatos.reduce(
         (acc, grupo) => {
             for (const d of grupo.datos) {
@@ -119,7 +132,7 @@ export default async function AdminPage({
                 operacionesFiltradas={operaciones.length}
             />
 
-            <AdminTablesClient grupos={gruposConDatos} />
+            <AdminTablesClient grupos={gruposConDatos} page={page} pageSize={PAGE_SIZE} />
         </div>
     )
 }
