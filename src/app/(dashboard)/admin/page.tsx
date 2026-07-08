@@ -5,6 +5,7 @@ import { AdminResumen } from './AdminResumen'
 import { Suspense } from 'react'
 import { getUserProfile } from '@/lib/auth'
 import { redirect } from 'next/navigation'
+import { formatDateColombia } from '@/lib/fecha-colombia'
 
 interface Grupo {
     nombre: string
@@ -86,8 +87,8 @@ export default async function AdminPage({
             )
             return {
                 nombre: g.nombre,
-                startString: g.start.toLocaleDateString('es-CO'),
-                endString: g.end.toLocaleDateString('es-CO'),
+                startString: formatDateColombia(g.start),
+                endString: formatDateColombia(g.end),
                 datos,
                 total,
             }
@@ -109,7 +110,7 @@ export default async function AdminPage({
 
     const rangoTotal =
         grupos.length > 0
-            ? `${grupos[0].start.toLocaleDateString('es-CO')} — ${grupos[grupos.length - 1].end.toLocaleDateString('es-CO')}`
+            ? `${formatDateColombia(grupos[0].start)} — ${formatDateColombia(grupos[grupos.length - 1].end)}`
             : '—'
 
     return (

@@ -16,6 +16,7 @@ import { Pagination } from '@/components/Pagination'
 import Link from 'next/link'
 import { getUserProfile } from '@/lib/auth'
 import { redirect } from 'next/navigation'
+import { fechaSoloFecha } from '@/lib/fecha-colombia'
 
 const PAGE_SIZE = 10
 
@@ -158,11 +159,11 @@ export default async function NovedadesPage({
                                                 <TableCell>
                                                     {nov.fecha_inicio && nov.fecha_fin ? (
                                                         <>
-                                                            <div className="text-xs">Del: {new Date(nov.fecha_inicio).toLocaleDateString('es-CO')}</div>
-                                                            <div className="text-xs">Al: {new Date(nov.fecha_fin).toLocaleDateString('es-CO')}</div>
+                                                            <div className="text-xs">Del: {fechaSoloFecha(nov.fecha_inicio)}</div>
+                                                            <div className="text-xs">Al: {fechaSoloFecha(nov.fecha_fin)}</div>
                                                         </>
                                                     ) : (
-                                                        <div className="text-xs">{new Date(nov.fecha_novedad).toLocaleDateString('es-CO')}</div>
+                                                        <div className="text-xs">{fechaSoloFecha(nov.fecha_novedad)}</div>
                                                     )}
                                                 </TableCell>
                                                 <TableCell>

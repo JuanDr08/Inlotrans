@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toColombiaTime } from '@/lib/calculoHoras'
 import { generarExcelNomina, type LineaNomina, type TarifaConCodigo } from '@/lib/excel/nomina'
 import { getD1 } from '@/lib/d1/client'
+import { getUserProfileFromRequest } from '@/lib/auth-route'
+import { getOperationFilter } from '@/lib/auth-helpers'
 
 function minToRoundedHours(min: number): number {
     if (min <= 0) return 0
@@ -55,11 +57,20 @@ export async function GET(request: NextRequest) {
             return NextResponse.json({ error: 'Faltan parámetros start y end.' }, { status: 400 })
         }
 
+        const profile = await getUserProfileFromRequest(request)
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado.' }, { status: 401 })
+        }
+        const filtroOp = getOperationFilter(profile)
+
         const startUTC = new Date(`${startParam}T05:00:00Z`)
         const endUTC = new Date(`${endParam}T05:00:00Z`)
         endUTC.setUTCDate(endUTC.getUTCDate() + 1)
 
-        const operaciones = opParam ? opParam.split(',').filter(Boolean) : []
+        let operaciones = opParam ? opParam.split(',').filter(Boolean) : []
+        if (filtroOp.length > 0) {
+            operaciones = filtroOp
+        }
 
         // ─── 1. Jornadas + usuarios ──────────────────────────────
         let jornadaSql = `

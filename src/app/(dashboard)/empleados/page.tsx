@@ -4,7 +4,7 @@ import { EmpleadoForm } from './EmpleadoForm'
 import { Button } from '@/components/ui/button'
 import { EmpleadosTable } from './EmpleadosTable'
 import Link from 'next/link'
-import { getOperacionesAdmin } from '../admin/operaciones-actions'
+import { getOperacionesActivas } from '../admin/operaciones-actions'
 import { getUserProfile } from '@/lib/auth'
 import { redirect } from 'next/navigation'
 
@@ -13,7 +13,7 @@ const PAGE_SIZE = 10
 export default async function EmpleadosPage({
     searchParams,
 }: {
-    searchParams: Promise<{ page?: string }>
+    searchParams: Promise<{ page?: string; q?: string }>
 }) {
     const profile = await getUserProfile()
     if (!profile) redirect('/')
@@ -21,36 +21,51 @@ export default async function EmpleadosPage({
     const pParams = await searchParams
     const page = Math.max(1, parseInt(pParams.page ?? '1', 10) || 1)
     const offset = (page - 1) * PAGE_SIZE
+    const search = (pParams.q ?? '').trim()
 
     const db = getD1()
 
     let empleados
     let total = 0
-    if (profile.rol === 'coordinador' && profile.operacion_nombre) {
-        const [{ results }, countRow] = await Promise.all([
-            db.prepare(
-                'SELECT id, nombre, cargo, operacion, status, salario FROM usuarios WHERE operacion = ? ORDER BY nombre ASC LIMIT ? OFFSET ?'
-            ).bind(profile.operacion_nombre, PAGE_SIZE, offset).all(),
-            db.prepare(
-                'SELECT COUNT(*) as total FROM usuarios WHERE operacion = ?'
-            ).bind(profile.operacion_nombre).first<{ total: number }>(),
-        ])
-        empleados = results
-        total = countRow?.total ?? 0
-    } else {
-        const [{ results }, countRow] = await Promise.all([
-            db.prepare(
-                'SELECT id, nombre, cargo, operacion, status, salario FROM usuarios ORDER BY nombre ASC LIMIT ? OFFSET ?'
-            ).bind(PAGE_SIZE, offset).all(),
-            db.prepare(
-                'SELECT COUNT(*) as total FROM usuarios'
-            ).first<{ total: number }>(),
-        ])
-        empleados = results
-        total = countRow?.total ?? 0
+
+    const isCoord = profile.rol === 'coordinador' && !!profile.operacion_nombre
+    const hasSearch = search.length > 0
+    const likePattern = `%${search}%`
+
+    const whereParts: string[] = []
+    const bindsData: unknown[] = []
+    const bindsCount: unknown[] = []
+
+    if (isCoord) {
+        whereParts.push('operacion = ?')
+        bindsData.push(profile.operacion_nombre)
+        bindsCount.push(profile.operacion_nombre)
+    }
+    if (hasSearch) {
+        whereParts.push('(id LIKE ? OR nombre LIKE ?)')
+        bindsData.push(likePattern, likePattern)
+        bindsCount.push(likePattern, likePattern)
     }
 
-    const resOps = await getOperacionesAdmin()
+    const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''
+
+    const dataStmt = db.prepare(
+        `SELECT id, nombre, cargo, operacion, status, salario FROM usuarios ${whereClause} ORDER BY nombre ASC LIMIT ? OFFSET ?`
+    )
+    const countStmt = db.prepare(
+        `SELECT COUNT(*) as total FROM usuarios ${whereClause}`
+    )
+
+    const [{ results }, countRow] = await Promise.all([
+        dataStmt.bind(...bindsData, PAGE_SIZE, offset).all(),
+        bindsCount.length > 0
+            ? countStmt.bind(...bindsCount).first<{ total: number }>()
+            : countStmt.first<{ total: number }>(),
+    ])
+    empleados = results
+    total = countRow?.total ?? 0
+
+    const resOps = await getOperacionesActivas()
     const allOperaciones = resOps.success && resOps.data ? resOps.data : []
 
     const operaciones = profile.rol === 'coordinador' && profile.operacion_nombre
@@ -92,6 +107,7 @@ export default async function EmpleadosPage({
                                 total={total}
                                 page={page}
                                 pageSize={PAGE_SIZE}
+                                initialSearch={search}
                             />
                         </CardContent>
                     </Card>

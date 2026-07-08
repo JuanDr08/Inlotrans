@@ -1,6 +1,7 @@
 'use server'
 
 import { getD1 } from '@/lib/d1/client'
+import { horaColombia } from '@/lib/fecha-colombia'
 import {
     abrirJornada,
     cerrarJornada,
@@ -39,8 +40,7 @@ export async function getEstadoJornada(cedula: string) {
         }
     }
 
-    const fechaEntrada = new Date(jornada.entrada)
-    const hora = fechaEntrada.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' })
+    const hora = horaColombia(jornada.entrada)
 
     return {
         success: true,

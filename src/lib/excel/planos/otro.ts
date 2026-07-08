@@ -50,7 +50,7 @@ export async function generarPlanoOtro(
     tipo: number,
     clase: number,
     causa: number,
-): Promise<Buffer> {
+): Promise<ArrayBuffer> {
     const wb = new ExcelJS.Workbook()
 
     // ── Hoja 1 ──────────────────────────────────────────────────
@@ -116,6 +116,5 @@ export async function generarPlanoOtro(
         ])
     }
 
-    const buffer = await wb.xlsx.writeBuffer()
-    return Buffer.from(buffer)
+    return await wb.xlsx.writeBuffer() as ArrayBuffer
 }

@@ -31,7 +31,7 @@ export default async function DashboardLayout({
 
     return (
         <div className="flex min-h-screen bg-slate-50/40">
-            <aside className="w-64 border-r bg-white p-4 hidden md:flex flex-col gap-4">
+            <aside className="w-64 border-r bg-white p-4 hidden md:flex flex-col gap-4 sticky top-0 h-screen overflow-y-auto">
                 <div className="flex h-14 items-center font-bold text-xl px-2">
                     Inlotrans
                 </div>

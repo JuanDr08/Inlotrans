@@ -9,9 +9,10 @@ interface PaginationProps {
     page: number
     pageSize: number
     total: number
+    paramName?: string
 }
 
-export function Pagination({ page, pageSize, total }: PaginationProps) {
+export function Pagination({ page, pageSize, total, paramName = 'page' }: PaginationProps) {
     const pathname = usePathname()
     const searchParams = useSearchParams()
     const totalPages = Math.max(1, Math.ceil(total / pageSize))
@@ -20,7 +21,7 @@ export function Pagination({ page, pageSize, total }: PaginationProps) {
 
     const buildHref = (targetPage: number) => {
         const params = new URLSearchParams(searchParams.toString())
-        params.set('page', String(targetPage))
+        params.set(paramName, String(targetPage))
         return `${pathname}?${params.toString()}`
     }
 

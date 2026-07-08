@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { fechaCortaColombia } from '@/lib/fecha-colombia'
 import {
     Operacion, Turno,
     upsertOperacion, deleteOperacion,
@@ -197,7 +198,7 @@ export function OperacionesClient({ initialData }: { initialData: Operacion[] })
                                         {op.minutos_almuerzo ? `${op.minutos_almuerzo} min` : '—'}
                                     </TableCell>
                                     <TableCell className="text-muted-foreground text-sm">
-                                        {op.created_at ? new Date(op.created_at).toLocaleDateString() : '-'}
+                                        {op.created_at ? fechaCortaColombia(op.created_at) : '-'}
                                     </TableCell>
                                     <TableCell className="text-right space-x-2">
                                         <Button variant="outline" size="sm" onClick={() => openTurnosModal(op)} title="Gestionar turnos">

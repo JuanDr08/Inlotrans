@@ -87,7 +87,7 @@ const ALIGN_CENTER: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertica
 export async function generarExcelNomina(
     lineas: LineaNomina[],
     tarifas: TarifaConCodigo[],
-): Promise<Buffer> {
+): Promise<ArrayBuffer> {
     const wb = new ExcelJS.Workbook()
     wb.creator = 'Inlotrans Asistencia'
     wb.created = new Date()
@@ -383,6 +383,5 @@ export async function generarExcelNomina(
         to: { row: 3, column: 20 },
     }
 
-    const buffer = await wb.xlsx.writeBuffer()
-    return Buffer.from(buffer)
+    return await wb.xlsx.writeBuffer() as ArrayBuffer
 }

@@ -30,7 +30,7 @@ function buildPeriodicidad(quincena: 1 | 2): string {
 export async function generarPlanoExtras(
     lineas: LineaExtra[],
     periodo: PeriodoPlano,
-): Promise<Buffer> {
+): Promise<ArrayBuffer> {
     const wb = new ExcelJS.Workbook()
     const { anio, mes, quincena } = periodo
 
@@ -113,6 +113,5 @@ export async function generarPlanoExtras(
         ])
     }
 
-    const buffer = await wb.xlsx.writeBuffer()
-    return Buffer.from(buffer)
+    return await wb.xlsx.writeBuffer() as ArrayBuffer
 }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generarPlanoOtro, type NovedadGenericaPlano } from '@/lib/excel/planos/otro'
 import { getD1 } from '@/lib/d1/client'
+import { getUserProfileFromRequest } from '@/lib/auth-route'
+import { getOperationFilter } from '@/lib/auth-helpers'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,6 +25,12 @@ export async function GET(request: NextRequest) {
             )
         }
 
+        const profile = await getUserProfileFromRequest(request)
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado.' }, { status: 401 })
+        }
+        const filtroOp = getOperationFilter(profile)
+
         const esPagado = clase === 1
 
         const pad = (n: number) => String(n).padStart(2, '0')
@@ -31,19 +39,26 @@ export async function GET(request: NextRequest) {
         const start = `${anio}-${pad(mes)}-${quincena === 1 ? '01' : '16'}`
         const end = `${anio}-${pad(mes)}-${quincena === 1 ? '15' : pad(lastDay)}`
 
-        let sql = `SELECT usuario_id, fecha_novedad, fecha_inicio, fecha_fin, es_pagado
-                   FROM novedades
-                   WHERE tipo_ausentismo = ? AND codigo_causa = ?
-                   AND ((fecha_novedad >= ? AND fecha_novedad <= ?) OR (fecha_inicio <= ? AND fecha_fin >= ?))`
+        let sql = `SELECT n.usuario_id, n.fecha_novedad, n.fecha_inicio, n.fecha_fin, n.es_pagado
+                   FROM novedades n
+                   INNER JOIN usuarios u ON u.id = n.usuario_id
+                   WHERE n.tipo_ausentismo = ? AND n.codigo_causa = ?
+                   AND ((n.fecha_novedad >= ? AND n.fecha_novedad <= ?) OR (n.fecha_inicio <= ? AND n.fecha_fin >= ?))`
 
         const bindValues: unknown[] = [tipo, causa, start, end, end, start]
 
         if (clase === 1 || clase === 2) {
-            sql += ' AND es_pagado = ?'
+            sql += ' AND n.es_pagado = ?'
             bindValues.push(esPagado ? 1 : 0)
         }
 
-        sql += ' ORDER BY fecha_novedad ASC'
+        if (filtroOp.length > 0) {
+            const ph = filtroOp.map(() => '?').join(', ')
+            sql += ` AND u.operacion IN (${ph})`
+            bindValues.push(...filtroOp)
+        }
+
+        sql += ' ORDER BY n.fecha_novedad ASC'
 
         const { results: novedades } = await db.prepare(sql).bind(...bindValues).all()
 

@@ -2,6 +2,13 @@
 
 import { useMemo, useCallback } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
+import {
+    horaColombia,
+    fechaCortaColombia,
+    fechaLargaColombia,
+    fechaSoloFecha,
+    nombreMesColombia,
+} from '@/lib/fecha-colombia'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -185,45 +192,6 @@ function fmtCOP(n: number) {
     return `$${(n ?? 0).toLocaleString('es-CO', { maximumFractionDigits: 0 })}`
 }
 
-function horaColombia(iso: string) {
-    const d = new Date(iso)
-    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
-    const h = col.getUTCHours()
-    const m = col.getUTCMinutes()
-    const ampm = h >= 12 ? 'p.m.' : 'a.m.'
-    const h12 = h === 0 ? 12 : h > 12 ? h - 12 : h
-    return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${ampm}`
-}
-
-function fechaCortaColombia(iso: string) {
-    const d = new Date(iso)
-    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
-    const dia = String(col.getUTCDate()).padStart(2, '0')
-    const mes = String(col.getUTCMonth() + 1).padStart(2, '0')
-    return `${dia}/${mes}/${col.getUTCFullYear()}`
-}
-
-function fechaLargaColombia(iso: string) {
-    const d = new Date(iso)
-    const col = new Date(d.getTime() - 5 * 60 * 60 * 1000)
-    return col.toLocaleDateString('es-CO', {
-        weekday: 'short',
-        day: '2-digit',
-        month: 'short',
-    })
-}
-
-function fechaSoloFecha(iso: string) {
-    // para fechas que vienen como YYYY-MM-DD (sin hora)
-    const [y, m, d] = iso.split('T')[0].split('-').map(Number)
-    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`
-}
-
-function nombreMes(iso: string) {
-    const d = new Date(iso)
-    const s = d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
-    return s.charAt(0).toUpperCase() + s.slice(1)
-}
 
 // ═══════════════════════════════════════════════════════════════════════
 // CONFIGURACIÓN DE LABELS Y COLORES
@@ -336,7 +304,7 @@ export function EmpleadoDetalleClient(props: Props) {
                         <ChevronLeft className="h-4 w-4" />
                     </Button>
                     <span className="text-sm font-medium text-slate-700 min-w-[140px] text-center">
-                        {nombreMes(mesRango.inicio)}
+                        {nombreMesColombia(mesRango.inicio)}
                     </span>
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navegarMes(1)} disabled={esHoy}>
                         <ChevronRight className="h-4 w-4" />

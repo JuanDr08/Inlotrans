@@ -6,8 +6,9 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { CheckCircle2, XCircle, Clock, AlertTriangle } from 'lucide-react'
-import { aprobarExtras, rechazarExtras, corregirInconsistente } from './actions'
+import { CheckCircle2, XCircle, Clock, AlertTriangle, Undo2 } from 'lucide-react'
+import { aprobarExtras, rechazarExtras, corregirInconsistente, revertirAprobacion } from './actions'
+import { horaColombia, fechaCortaColombia, fechaHoraColombia } from '@/lib/fecha-colombia'
 
 function minutosAHoras(min: number) {
     const h = Math.floor(min / 60)
@@ -61,8 +62,6 @@ export function AprobacionesPanel({ aprobaciones }: { aprobaciones: Aprobacion[]
     return (
         <div className="space-y-4">
             {aprobaciones.map(ap => {
-                const entradaDate = ap.jornadas?.entrada ? new Date(ap.jornadas.entrada) : null
-                const salidaDate = ap.jornadas?.salida ? new Date(ap.jornadas.salida) : null
                 return (
                     <div key={ap.id} className="border rounded-lg p-4 bg-white space-y-3">
                         <div className="flex items-start justify-between gap-4">
@@ -77,10 +76,10 @@ export function AprobacionesPanel({ aprobaciones }: { aprobaciones: Aprobacion[]
                                 {minutosAHoras(ap.minutos_solicitados)} extra
                             </Badge>
                         </div>
-                        {entradaDate && (
+                        {ap.jornadas?.entrada && (
                             <p className="text-xs text-slate-400">
-                                Jornada: {entradaDate.toLocaleDateString('es-CO')} — {entradaDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}
-                                {salidaDate && ` → ${salidaDate.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })}`}
+                                Jornada: {fechaCortaColombia(ap.jornadas!.entrada)} — {horaColombia(ap.jornadas!.entrada)}
+                                {ap.jornadas?.salida && ` → ${horaColombia(ap.jornadas.salida)}`}
                                 {ap.jornadas?.minutos_total ? ` (${minutosAHoras(ap.jornadas.minutos_total)} totales)` : ''}
                             </p>
                         )}
@@ -110,6 +109,128 @@ export function AprobacionesPanel({ aprobaciones }: { aprobaciones: Aprobacion[]
                                 <XCircle className="w-4 h-4" /> Rechazar
                             </Button>
                         </div>
+                    </div>
+                )
+            })}
+        </div>
+    )
+}
+
+// ─── PANEL DE RESUELTAS (APROBADAS / RECHAZADAS) ────────────────────────────
+
+interface AprobacionResuelta {
+    id: string
+    minutos_solicitados: number
+    estado: string
+    created_at: string
+    updated_at: string
+    empleado_id: string
+    jornada_id: string
+    coordinador_id: string | null
+    nota_coordinador: string | null
+    jornadas: { entrada: string; salida: string | null; operacion: string; minutos_total: number } | null
+    usuarios: { nombre: string; operacion: string } | null
+}
+
+export function ResueltasPanel({ aprobaciones }: { aprobaciones: AprobacionResuelta[] }) {
+    const [nota, setNota] = useState<Record<string, string>>({})
+    const [loading, setLoading] = useState<Record<string, boolean>>({})
+    const [confirmId, setConfirmId] = useState<string | null>(null)
+
+    const handleRevertir = async (id: string) => {
+        if (!nota[id]?.trim()) { toast.error('Agregá una nota explicando por qué revertís.'); return }
+        setLoading(prev => ({ ...prev, [id]: true }))
+        const res = await revertirAprobacion(id, nota[id])
+        setLoading(prev => ({ ...prev, [id]: false }))
+        setConfirmId(null)
+        if (res.success) toast.success('Aprobación revertida a PENDIENTE.')
+        else toast.error(res.error)
+    }
+
+    if (aprobaciones.length === 0) {
+        return (
+            <div className="text-center py-12 text-slate-500">
+                <Clock className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                <p className="font-medium">No hay aprobaciones resueltas recientes.</p>
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-4">
+            {aprobaciones.map(ap => {
+                const isAprobada = ap.estado === 'APROBADA'
+                return (
+                    <div key={ap.id} className={`border rounded-lg p-4 space-y-3 ${isAprobada ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}`}>
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <p className="font-semibold text-slate-800">
+                                    {ap.usuarios?.nombre ?? ap.empleado_id}
+                                </p>
+                                <p className="text-sm text-slate-500">{ap.jornadas?.operacion}</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-slate-600 border-slate-300 whitespace-nowrap">
+                                    {minutosAHoras(ap.minutos_solicitados)} extra
+                                </Badge>
+                                {isAprobada ? (
+                                    <Badge className="bg-green-600 whitespace-nowrap">
+                                        <CheckCircle2 className="w-3 h-3 mr-1" /> Aprobada
+                                    </Badge>
+                                ) : (
+                                    <Badge variant="destructive" className="whitespace-nowrap">
+                                        <XCircle className="w-3 h-3 mr-1" /> Rechazada
+                                    </Badge>
+                                )}
+                            </div>
+                        </div>
+                        {ap.jornadas?.entrada && (
+                            <p className="text-xs text-slate-400">
+                                Jornada: {fechaCortaColombia(ap.jornadas.entrada)} — {horaColombia(ap.jornadas.entrada)}
+                                {ap.jornadas?.salida && ` → ${horaColombia(ap.jornadas.salida)}`}
+                                {ap.jornadas?.minutos_total ? ` (${minutosAHoras(ap.jornadas.minutos_total)} totales)` : ''}
+                            </p>
+                        )}
+                        {ap.nota_coordinador && (
+                            <p className="text-xs text-slate-500 italic">Nota: {ap.nota_coordinador}</p>
+                        )}
+                        {confirmId === ap.id ? (
+                            <div className="space-y-2 pt-1">
+                                <Textarea
+                                    placeholder="Motivo de la reversión (obligatorio)..."
+                                    value={nota[ap.id] ?? ''}
+                                    onChange={e => setNota(prev => ({ ...prev, [ap.id]: e.target.value }))}
+                                    rows={2}
+                                    className="text-sm"
+                                />
+                                <div className="flex gap-2">
+                                    <Button
+                                        size="sm"
+                                        className="bg-amber-600 hover:bg-amber-700 gap-1"
+                                        disabled={loading[ap.id]}
+                                        onClick={() => handleRevertir(ap.id)}
+                                    >
+                                        <Undo2 className="w-4 h-4" /> Confirmar reversión
+                                    </Button>
+                                    <Button
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => setConfirmId(null)}
+                                    >
+                                        Cancelar
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-amber-400 text-amber-700 hover:bg-amber-50 gap-1"
+                                onClick={() => setConfirmId(ap.id)}
+                            >
+                                <Undo2 className="w-4 h-4" /> Revertir a pendiente
+                            </Button>
+                        )}
                     </div>
                 )
             })}
@@ -162,8 +283,6 @@ export function InconsistentesPanel({ jornadas }: { jornadas: Inconsistente[] })
     return (
         <div className="space-y-4">
             {jornadas.map(j => {
-                const entradaDate = new Date(j.entrada)
-                const entradaBogota = new Date(entradaDate.getTime() - 5 * 60 * 60 * 1000)
                 return (
                     <div key={j.id} className="border border-red-200 rounded-lg p-4 bg-red-50 space-y-3">
                         <div className="flex items-start justify-between gap-4">
@@ -178,8 +297,8 @@ export function InconsistentesPanel({ jornadas }: { jornadas: Inconsistente[] })
                             </Badge>
                         </div>
                         <p className="text-sm text-slate-600">
-                            Entrada: {entradaBogota.toLocaleDateString('es-CO')} a las{' '}
-                            {entradaBogota.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit' })} (Bogotá)
+                            Entrada: {fechaCortaColombia(j.entrada)} a las{' '}
+                            {horaColombia(j.entrada)} (Bogotá)
                         </p>
                         <div className="flex items-center gap-3">
                             <div className="flex-1">

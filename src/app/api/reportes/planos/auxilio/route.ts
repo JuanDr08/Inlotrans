@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generarPlanoAuxilio, type NovedadAuxilio } from '@/lib/excel/planos/auxilio'
 import { getD1 } from '@/lib/d1/client'
+import { getUserProfileFromRequest } from '@/lib/auth-route'
+import { getOperationFilter } from '@/lib/auth-helpers'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,21 +22,32 @@ export async function GET(request: NextRequest) {
             )
         }
 
+        const profile = await getUserProfileFromRequest(request)
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado.' }, { status: 401 })
+        }
+        const filtroOp = getOperationFilter(profile)
+
         const pad = (n: number) => String(n).padStart(2, '0')
         const lastDay = new Date(anio, mes, 0).getDate()
 
         const start = `${anio}-${pad(mes)}-${quincena === 1 ? '01' : '16'}`
         const end = `${anio}-${pad(mes)}-${quincena === 1 ? '15' : pad(lastDay)}`
 
-        const { results: novedades } = await db
-            .prepare(
-                `SELECT usuario_id, valor_monetario FROM novedades
-                 WHERE tipo_novedad = 'AUXILIO_NO_PRESTACIONAL'
-                 AND fecha_novedad >= ? AND fecha_novedad <= ?
-                 ORDER BY fecha_novedad ASC`,
-            )
-            .bind(start, end)
-            .all()
+        let novedadSql = `SELECT n.usuario_id, n.valor_monetario FROM novedades n
+                 INNER JOIN usuarios u ON u.id = n.usuario_id
+                 WHERE n.tipo_novedad = 'AUXILIO_NO_PRESTACIONAL'
+                 AND n.fecha_novedad >= ? AND n.fecha_novedad <= ?`
+        const binds: unknown[] = [start, end]
+
+        if (filtroOp.length > 0) {
+            const ph = filtroOp.map(() => '?').join(', ')
+            novedadSql += ` AND u.operacion IN (${ph})`
+            binds.push(...filtroOp)
+        }
+        novedadSql += ' ORDER BY n.fecha_novedad ASC'
+
+        const { results: novedades } = await db.prepare(novedadSql).bind(...binds).all()
 
         const datos: NovedadAuxilio[] = ((novedades ?? []) as Record<string, unknown>[]).map((n: Record<string, unknown>) => ({
             cedula: n.usuario_id as string,

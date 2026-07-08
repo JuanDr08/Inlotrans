@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
     Table,
     TableBody,
@@ -18,7 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { editarEmpleado, cambiarEstadoEmpleado } from './actions'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import { Pagination } from '@/components/Pagination'
 
@@ -28,19 +28,42 @@ export function EmpleadosTable({
     rol,
     total,
     page,
-    pageSize
+    pageSize,
+    initialSearch
 }: {
     empleados: any[],
     operaciones: { id: string, nombre: string }[],
     rol: string,
     total: number,
     page: number,
-    pageSize: number
+    pageSize: number,
+    initialSearch: string
 }) {
     const router = useRouter()
+    const pathname = usePathname()
+    const searchParams = useSearchParams()
     const [editingEmp, setEditingEmp] = useState<any>(null)
     const [isSaving, setIsSaving] = useState(false)
-    const [searchTerm, setSearchTerm] = useState('')
+    const [searchTerm, setSearchTerm] = useState(initialSearch)
+    const isFirstRender = useRef(true)
+
+    useEffect(() => {
+        if (isFirstRender.current) {
+            isFirstRender.current = false
+            return
+        }
+        const timer = setTimeout(() => {
+            const params = new URLSearchParams(searchParams.toString())
+            if (searchTerm.trim()) {
+                params.set('q', searchTerm.trim())
+            } else {
+                params.delete('q')
+            }
+            params.delete('page')
+            router.push(`${pathname}?${params.toString()}`)
+        }, 400)
+        return () => clearTimeout(timer)
+    }, [searchTerm])
 
     // Form states
     const [editNombre, setEditNombre] = useState('')
@@ -97,11 +120,6 @@ export function EmpleadosTable({
         }
     }
 
-    const filteredEmpleados = empleados?.filter((emp: any) => 
-        emp.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-        emp.id.includes(searchTerm)
-    )
-
     return (
         <div className="space-y-4">
             <div className="pb-4">
@@ -112,7 +130,7 @@ export function EmpleadosTable({
                     className="max-w-md bg-white border-slate-200"
                 />
             </div>
-            
+
             <div className="rounded-md border overflow-x-auto">
                 <Table>
                 <TableHeader>
@@ -125,14 +143,14 @@ export function EmpleadosTable({
                     </TableRow>
                 </TableHeader>
                 <TableBody>
-                    {filteredEmpleados?.length === 0 && (
+                    {empleados?.length === 0 && (
                         <TableRow>
                             <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                                 No se encontraron empleados.
                             </TableCell>
                         </TableRow>
                     )}
-                    {filteredEmpleados?.map((emp: any) => (
+                    {empleados?.map((emp: any) => (
                         <TableRow key={emp.id}>
                             <TableCell className="font-semibold">{emp.id}</TableCell>
                             <TableCell>

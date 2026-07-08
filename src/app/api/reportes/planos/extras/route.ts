@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { generarPlanoExtras, type LineaExtra } from '@/lib/excel/planos/extras'
 import { getD1 } from '@/lib/d1/client'
+import { getUserProfileFromRequest } from '@/lib/auth-route'
+import { getOperationFilter } from '@/lib/auth-helpers'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,6 +34,12 @@ export async function GET(request: NextRequest) {
             )
         }
 
+        const profile = await getUserProfileFromRequest(request)
+        if (!profile) {
+            return NextResponse.json({ error: 'No autorizado.' }, { status: 401 })
+        }
+        const filtroOp = getOperationFilter(profile)
+
         const pad = (n: number) => String(n).padStart(2, '0')
         const lastDay = new Date(anio, mes, 0).getDate()
         const startDay = quincena === 1 ? 1 : 16
@@ -41,32 +49,46 @@ export async function GET(request: NextRequest) {
         const endUTC = new Date(`${anio}-${pad(mes)}-${pad(endDay)}T05:00:00Z`)
         endUTC.setUTCDate(endUTC.getUTCDate() + 1)
 
-        const { results: aprobaciones } = await db
-            .prepare(
-                `SELECT ae.jornada_id FROM aprobaciones_extras ae
+        let aprobacionesSql = `SELECT ae.jornada_id FROM aprobaciones_extras ae
                  INNER JOIN jornadas j ON j.id = ae.jornada_id
                  WHERE ae.estado = 'APROBADA'
-                 AND j.entrada >= ? AND j.entrada < ?`,
-            )
-            .bind(startUTC.toISOString(), endUTC.toISOString())
+                 AND j.entrada >= ? AND j.entrada < ?`
+        const aprobBinds: unknown[] = [startUTC.toISOString(), endUTC.toISOString()]
+
+        if (filtroOp.length > 0) {
+            const ph = filtroOp.map(() => '?').join(', ')
+            aprobacionesSql += ` AND j.operacion IN (${ph})`
+            aprobBinds.push(...filtroOp)
+        }
+
+        const { results: aprobaciones } = await db
+            .prepare(aprobacionesSql)
+            .bind(...aprobBinds)
             .all()
 
         const jornadaIdsAprobadas = new Set(
             ((aprobaciones ?? []) as Record<string, unknown>[]).map((a: Record<string, unknown>) => a.jornada_id as string),
         )
 
-        const { results: jornadas } = await db
-            .prepare(
-                `SELECT id, empleado_id,
+        let jornadasSql = `SELECT id, empleado_id,
                         minutos_extras_ordinarias, minutos_extras_nocturnas,
                         minutos_extras_dominical_festivo, minutos_extras_nocturna_dominical_festivo,
                         minutos_nocturnas, minutos_festivos, minutos_domingos,
                         minutos_domingos_festivos_nocturnos
                  FROM jornadas
                  WHERE estado IN ('CERRADO', 'CERRADO_MANUAL')
-                 AND entrada >= ? AND entrada < ?`,
-            )
-            .bind(startUTC.toISOString(), endUTC.toISOString())
+                 AND entrada >= ? AND entrada < ?`
+        const jorBinds: unknown[] = [startUTC.toISOString(), endUTC.toISOString()]
+
+        if (filtroOp.length > 0) {
+            const ph = filtroOp.map(() => '?').join(', ')
+            jornadasSql += ` AND operacion IN (${ph})`
+            jorBinds.push(...filtroOp)
+        }
+
+        const { results: jornadas } = await db
+            .prepare(jornadasSql)
+            .bind(...jorBinds)
             .all()
 
         const agg = new Map<string, number>()
