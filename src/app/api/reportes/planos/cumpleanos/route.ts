@@ -54,10 +54,10 @@ export async function GET(request: NextRequest) {
             fecha_novedad: n.fecha_novedad as string,
         }))
 
-        const buffer = await generarPlanoCumpleanos(datos)
+        const buffer = generarPlanoCumpleanos(datos)
 
         const filename = `plano_cumpleanos_${anio}-${pad(mes)}_${quincena}Q.xlsx`
-        return new NextResponse(new Uint8Array(buffer), {
+        return new NextResponse(buffer.buffer as ArrayBuffer, {
             status: 200,
             headers: {
                 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

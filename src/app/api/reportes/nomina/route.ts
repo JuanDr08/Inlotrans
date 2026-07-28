@@ -261,10 +261,10 @@ export async function GET(request: NextRequest) {
         lineas.sort((a, b) => a.fecha.localeCompare(b.fecha) || a.nombre.localeCompare(b.nombre))
 
         // ─── 6. Generar Excel ───────────────────────────────────
-        const buffer = await generarExcelNomina(lineas, tarifasConCodigo)
+        const buffer = generarExcelNomina(lineas, tarifasConCodigo)
 
         const filename = `nomina_${startParam}_${endParam}.xlsx`
-        return new NextResponse(new Uint8Array(buffer), {
+        return new NextResponse(buffer.buffer as ArrayBuffer, {
             status: 200,
             headers: {
                 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

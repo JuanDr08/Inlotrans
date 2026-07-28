@@ -1,19 +1,19 @@
-import ExcelJS from 'exceljs'
+import XLSX from 'xlsx-js-style'
 
 // ════════════════════════════════════════════════════════════════════
 // Tipos
 // ════════════════════════════════════════════════════════════════════
 
 export interface LineaNomina {
-    fecha: string              // "miércoles, abril 01, 2026"
+    fecha: string
     cargo: string
     cedula: string
     nombre: string
-    horaIn: number             // hora entera truncada (6, 14, 22)
-    horaOut: number            // hora entera truncada
-    almuerzo: number           // horas enteras (0 o 1)
-    horas: number              // OUT - IN (directo, entero, consistente)
-    extraDiurna: number        // Math.round(minutos/60)
+    horaIn: number
+    horaOut: number
+    almuerzo: number
+    horas: number
+    extraDiurna: number
     extraNocturna: number
     extraFestivaDiurna: number
     extraFestivaNocturna: number
@@ -33,7 +33,6 @@ export interface TarifaConCodigo {
     codigo_nomina: string | null
 }
 
-// Mapeo de columnas especiales → posición en el array (para totales)
 const COLS_ESPECIALES = [
     { key: 'extraDiurna' as const,           label: 'H.E',    concepto: 'H.E' },
     { key: 'extraNocturna' as const,         label: 'H.E.N',  concepto: 'H.E.N' },
@@ -44,7 +43,6 @@ const COLS_ESPECIALES = [
     { key: 'recargoFestivo' as const,        label: 'R.F',    concepto: 'R.F' },
 ]
 
-// Mapeo tipo_hora → key en LineaNomina (para buscar la tarifa de cada columna)
 const TIPO_HORA_A_COL: Record<string, (typeof COLS_ESPECIALES)[number]['key']> = {
     extra: 'extraDiurna',
     extraNocturno: 'extraNocturna',
@@ -59,118 +57,136 @@ const TIPO_HORA_A_COL: Record<string, (typeof COLS_ESPECIALES)[number]['key']> =
 const HORAS_LEGALES_MES = 220
 
 // ════════════════════════════════════════════════════════════════════
-// Estilos
+// Estilos (xlsx-js-style format)
 // ════════════════════════════════════════════════════════════════════
 
-const FONT_DEFAULT: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10 }
-const FONT_HEADER: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFFFF' } }
-const FONT_BOLD: Partial<ExcelJS.Font> = { name: 'Calibri', size: 10, bold: true }
+const FONT_DEFAULT = { name: 'Calibri', sz: 10 }
+const FONT_HEADER = { name: 'Calibri', sz: 10, bold: true, color: { rgb: 'FFFFFF' } }
+const FONT_BOLD = { name: 'Calibri', sz: 10, bold: true }
 
-const FILL_RED: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFF0000' } }
-const FILL_GREEN: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF008000' } }
-const FILL_YELLOW: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } }
-const FILL_LIGHT_YELLOW: ExcelJS.Fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFCC' } }
+const FILL_RED = { patternType: 'solid' as const, fgColor: { rgb: 'FF0000' } }
+const FILL_GREEN = { patternType: 'solid' as const, fgColor: { rgb: '008000' } }
+const FILL_YELLOW = { patternType: 'solid' as const, fgColor: { rgb: 'FFFF00' } }
+const FILL_LIGHT_YELLOW = { patternType: 'solid' as const, fgColor: { rgb: 'FFFFCC' } }
 
-const BORDER_THIN: Partial<ExcelJS.Borders> = {
-    top: { style: 'thin' },
-    left: { style: 'thin' },
-    bottom: { style: 'thin' },
-    right: { style: 'thin' },
+const BORDER_THIN = {
+    top: { style: 'thin' as const },
+    left: { style: 'thin' as const },
+    bottom: { style: 'thin' as const },
+    right: { style: 'thin' as const },
 }
 
-const ALIGN_CENTER: Partial<ExcelJS.Alignment> = { horizontal: 'center', vertical: 'middle' }
+const ALIGN_CENTER = { horizontal: 'center' as const, vertical: 'center' as const }
+
+// ════════════════════════════════════════════════════════════════════
+// Helpers
+// ════════════════════════════════════════════════════════════════════
+
+function cell(r: number, c: number): string {
+    return XLSX.utils.encode_cell({ r, c })
+}
+
+function setCell(
+    ws: XLSX.WorkSheet,
+    r: number,
+    c: number,
+    value: string | number | null | undefined,
+    style?: Record<string, unknown>,
+): void {
+    const addr = cell(r, c)
+    const t = typeof value === 'number' ? 'n' : 's'
+    ws[addr] = { v: value ?? '', t, s: style ?? {} }
+}
+
+function setStyledCell(
+    ws: XLSX.WorkSheet,
+    r: number,
+    c: number,
+    value: string | number | null | undefined,
+    opts: {
+        font?: Record<string, unknown>
+        fill?: Record<string, unknown>
+        alignment?: Record<string, unknown>
+        border?: Record<string, unknown>
+        numFmt?: string
+    },
+): void {
+    const addr = cell(r, c)
+    const t = typeof value === 'number' ? 'n' : 's'
+    const s: Record<string, unknown> = {}
+    if (opts.font) s.font = opts.font
+    if (opts.fill) s.fill = opts.fill
+    if (opts.alignment) s.alignment = opts.alignment
+    if (opts.border) s.border = opts.border
+    if (opts.numFmt) s.numFmt = opts.numFmt
+    ws[addr] = { v: value ?? '', t, s, ...(opts.numFmt ? { z: opts.numFmt } : {}) }
+}
 
 // ════════════════════════════════════════════════════════════════════
 // Generador
 // ════════════════════════════════════════════════════════════════════
 
-export async function generarExcelNomina(
+export function generarExcelNomina(
     lineas: LineaNomina[],
     tarifas: TarifaConCodigo[],
-): Promise<ArrayBuffer> {
-    const wb = new ExcelJS.Workbook()
-    wb.creator = 'Inlotrans Asistencia'
-    wb.created = new Date()
-    const ws = wb.addWorksheet('Nómina', { views: [{ state: 'frozen', ySplit: 4 }] })
+): Uint8Array {
+    const wb = XLSX.utils.book_new()
+    wb.Props = { Author: 'Inlotrans Asistencia', CreatedDate: new Date() }
+    const ws: XLSX.WorkSheet = {}
 
     // ─── Columnas ───────────────────────────────────────────────
-    // A=fecha, B=cargo, C=cedula, D=nombre, E=IN, F=OUT, G=ALMU, H=HORAS,
-    // I=H.E.D, J=H.E.N, K=E.F.D, L=E.F.N, M=R.N, N=R.F.N, O=R.F,
-    // P=OPERACION, Q=CENTRO COSTO, R=DETALLE OP, S=NOVEDAD, T=DETALLE NOV
-    ws.columns = [
-        { key: 'fecha',                width: 28 },
-        { key: 'cargo',                width: 18 },
-        { key: 'cedula',               width: 16 },
-        { key: 'nombre',               width: 35 },
-        { key: 'horaIn',               width: 6 },
-        { key: 'horaOut',              width: 6 },
-        { key: 'almuerzo',             width: 6 },
-        { key: 'horas',               width: 8 },
-        { key: 'extraDiurna',          width: 10 },
-        { key: 'extraNocturna',        width: 10 },
-        { key: 'extraFestivaDiurna',   width: 10 },
-        { key: 'extraFestivaNocturna', width: 10 },
-        { key: 'recargoNocturno',      width: 10 },
-        { key: 'recargoFestivoNocturno', width: 10 },
-        { key: 'recargoFestivo',       width: 10 },
-        { key: 'operacion',            width: 22 },
-        { key: 'codigoOperacion',      width: 14 },
-        { key: 'detalleOperacion',     width: 20 },
-        { key: 'novedad',              width: 22 },
-        { key: 'detalleNovedad',       width: 30 },
+    ws['!cols'] = [
+        { wch: 28 },  // A: fecha
+        { wch: 18 },  // B: cargo
+        { wch: 16 },  // C: cedula
+        { wch: 35 },  // D: nombre
+        { wch: 6 },   // E: horaIn
+        { wch: 6 },   // F: horaOut
+        { wch: 6 },   // G: almuerzo
+        { wch: 8 },   // H: horas
+        { wch: 10 },  // I: extraDiurna
+        { wch: 10 },  // J: extraNocturna
+        { wch: 10 },  // K: extraFestivaDiurna
+        { wch: 10 },  // L: extraFestivaNocturna
+        { wch: 10 },  // M: recargoNocturno
+        { wch: 10 },  // N: recargoFestivoNocturno
+        { wch: 10 },  // O: recargoFestivo
+        { wch: 22 },  // P: operacion
+        { wch: 14 },  // Q: codigoOperacion
+        { wch: 20 },  // R: detalleOperacion
+        { wch: 22 },  // S: novedad
+        { wch: 30 },  // T: detalleNovedad
     ]
 
-    // ─── Fila 1: Grupo headers ──────────────────────────────────
-    const row1 = ws.getRow(1)
-    // "HORARIO MILITAR" sobre E-F
-    ws.mergeCells('E1:F1')
-    row1.getCell('E').value = 'HORARIO MILITAR'
-    row1.getCell('E').fill = FILL_GREEN
-    row1.getCell('E').font = FONT_HEADER
-    row1.getCell('E').alignment = ALIGN_CENTER
+    ws['!merges'] = []
 
-    // "NO MODIFICAR EL FORMATO" sobre G-H
-    ws.mergeCells('G1:H1')
-    row1.getCell('G').value = 'NO MODIFICAR EL FORMATO'
-    row1.getCell('G').fill = FILL_RED
-    row1.getCell('G').font = FONT_HEADER
-    row1.getCell('G').alignment = ALIGN_CENTER
+    // ─── Fila 1 (row 0): Grupo headers ─────────────────────────
+    // "HORARIO MILITAR" over E-F (cols 4-5)
+    ws['!merges'].push({ s: { r: 0, c: 4 }, e: { r: 0, c: 5 } })
+    setStyledCell(ws, 0, 4, 'HORARIO MILITAR', { fill: FILL_GREEN, font: FONT_HEADER, alignment: ALIGN_CENTER })
+    setStyledCell(ws, 0, 5, '', { fill: FILL_GREEN, font: FONT_HEADER, alignment: ALIGN_CENTER })
 
-    // Tipos de hora sobre I-O (individual cada uno)
+    // "NO MODIFICAR EL FORMATO" over G-H (cols 6-7)
+    ws['!merges'].push({ s: { r: 0, c: 6 }, e: { r: 0, c: 7 } })
+    setStyledCell(ws, 0, 6, 'NO MODIFICAR EL FORMATO', { fill: FILL_RED, font: FONT_HEADER, alignment: ALIGN_CENTER })
+    setStyledCell(ws, 0, 7, '', { fill: FILL_RED, font: FONT_HEADER, alignment: ALIGN_CENTER })
+
+    // Tipos de hora I-O (cols 8-14)
     const tipoHeaders = ['H.E.D', 'H.E.N', 'E.F.D', 'E.F.N', 'R.N', 'R.F.N', 'R.F']
-    const tipoCols = ['I', 'J', 'K', 'L', 'M', 'N', 'O']
-    tipoCols.forEach((col, i) => {
-        const cell = row1.getCell(col)
-        cell.value = tipoHeaders[i]
-        cell.fill = FILL_RED
-        cell.font = FONT_HEADER
-        cell.alignment = ALIGN_CENTER
+    tipoHeaders.forEach((h, i) => {
+        setStyledCell(ws, 0, 8 + i, h, { fill: FILL_RED, font: FONT_HEADER, alignment: ALIGN_CENTER })
     })
 
-    // "COLOCAR DONDE SE COBRARÁ" sobre P-Q
-    ws.mergeCells('P1:Q1')
-    row1.getCell('P').value = 'COLOCAR DONDE SE COBRARÁ A LA PERSONA'
-    row1.getCell('P').fill = FILL_GREEN
-    row1.getCell('P').font = FONT_HEADER
-    row1.getCell('P').alignment = ALIGN_CENTER
+    // "COLOCAR DONDE SE COBRARÁ A LA PERSONA" over P-Q (cols 15-16)
+    ws['!merges'].push({ s: { r: 0, c: 15 }, e: { r: 0, c: 16 } })
+    setStyledCell(ws, 0, 15, 'COLOCAR DONDE SE COBRARÁ A LA PERSONA', { fill: FILL_GREEN, font: FONT_HEADER, alignment: ALIGN_CENTER })
+    setStyledCell(ws, 0, 16, '', { fill: FILL_GREEN, font: FONT_HEADER, alignment: ALIGN_CENTER })
 
-    // ─── Fila 2: Headers principales ────────────────────────────
-    const row2 = ws.getRow(2)
-    const headers2 = [
-        '', '', 'CEDULAS SIN PUNTO Y CORRECTAS',
-        'DEBE ESTAR POR APELLIDO Y NOMBRE (COMPLETOS)', '', '', '', '',
-    ]
-    headers2.forEach((h, i) => {
-        if (h) {
-            const cell = row2.getCell(i + 1)
-            cell.value = h
-            cell.font = FONT_BOLD
-            cell.alignment = { ...ALIGN_CENTER, wrapText: true }
-        }
-    })
+    // ─── Fila 2 (row 1): Headers principales ────────────────────
+    setStyledCell(ws, 1, 2, 'CEDULAS SIN PUNTO Y CORRECTAS', { font: FONT_BOLD, alignment: { ...ALIGN_CENTER, wrapText: true } })
+    setStyledCell(ws, 1, 3, 'DEBE ESTAR POR APELLIDO Y NOMBRE (COMPLETOS)', { font: FONT_BOLD, alignment: { ...ALIGN_CENTER, wrapText: true } })
 
-    // ─── Fila 3: Sub-headers de columna ─────────────────────────
-    const row3 = ws.getRow(3)
+    // ─── Fila 3 (row 2): Sub-headers de columna ─────────────────
     const subHeaders = [
         'FECHA', 'CARGO', 'CEDULA', 'NOMBRE',
         'IN', 'OUT', 'ALMU', 'HORAS',
@@ -179,30 +195,22 @@ export async function generarExcelNomina(
         'NOVEDAD', 'DETALLE DE LA NOVEDAD',
     ]
     subHeaders.forEach((h, i) => {
-        const cell = row3.getCell(i + 1)
-        cell.value = h
-        cell.font = FONT_BOLD
-        cell.fill = i < 8 ? FILL_RED : i < 15 ? FILL_RED : i < 18 ? FILL_YELLOW : FILL_YELLOW
-        cell.font = i < 15 ? FONT_HEADER : FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.border = BORDER_THIN
+        const fill = i < 15 ? FILL_RED : FILL_YELLOW
+        const font = i < 15 ? FONT_HEADER : FONT_BOLD
+        setStyledCell(ws, 2, i, h, { font, fill, alignment: ALIGN_CENTER, border: BORDER_THIN })
     })
 
-    // ─── Fila 4: Códigos de nómina debajo de cada tipo de hora ──
-    const row4 = ws.getRow(4)
+    // ─── Fila 4 (row 3): Códigos de nómina debajo de cada tipo ──
     const tarifaMap = new Map(tarifas.map((t) => [t.tipo_hora, t]))
     const codigosOrden = ['extra', 'extraNocturno', 'extraDominicalFestivo', 'extraNocturnaDominicalFestivo', 'nocturno', 'domingoFestivoNocturno', 'festivo']
     codigosOrden.forEach((tipo, i) => {
-        const cell = row4.getCell(9 + i) // columnas I-O
         const tarifa = tarifaMap.get(tipo)
-        cell.value = tarifa?.codigo_nomina ? Number(tarifa.codigo_nomina) : ''
-        cell.font = FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.border = BORDER_THIN
+        const val = tarifa?.codigo_nomina ? Number(tarifa.codigo_nomina) : ''
+        setStyledCell(ws, 3, 8 + i, val, { font: FONT_BOLD, alignment: ALIGN_CENTER, border: BORDER_THIN })
     })
 
     // ─── Datos ──────────────────────────────────────────────────
-    let dataStartRow = 5
+    let currentRow = 4
     const totales = {
         horaIn: 0, horaOut: 0, almuerzo: 0, horas: 0,
         extraDiurna: 0, extraNocturna: 0, extraFestivaDiurna: 0,
@@ -211,36 +219,25 @@ export async function generarExcelNomina(
     }
 
     for (const linea of lineas) {
-        const row = ws.addRow([
-            linea.fecha,
-            linea.cargo,
-            linea.cedula,
-            linea.nombre,
-            linea.horaIn,
-            linea.horaOut,
-            linea.almuerzo,
-            linea.horas,
-            linea.extraDiurna,
-            linea.extraNocturna,
-            linea.extraFestivaDiurna,
-            linea.extraFestivaNocturna,
-            linea.recargoNocturno,
-            linea.recargoFestivoNocturno,
-            linea.recargoFestivo,
-            linea.operacion,
-            linea.codigoOperacion,
-            linea.detalleOperacion,
-            linea.novedad,
-            linea.detalleNovedad,
-        ])
+        const values: (string | number)[] = [
+            linea.fecha, linea.cargo, linea.cedula, linea.nombre,
+            linea.horaIn, linea.horaOut, linea.almuerzo, linea.horas,
+            linea.extraDiurna, linea.extraNocturna, linea.extraFestivaDiurna,
+            linea.extraFestivaNocturna, linea.recargoNocturno,
+            linea.recargoFestivoNocturno, linea.recargoFestivo,
+            linea.operacion, linea.codigoOperacion, linea.detalleOperacion,
+            linea.novedad, linea.detalleNovedad,
+        ]
 
-        row.font = FONT_DEFAULT
-        row.alignment = { vertical: 'middle' }
-        for (let c = 5; c <= 15; c++) {
-            row.getCell(c).alignment = ALIGN_CENTER
-        }
+        values.forEach((v, i) => {
+            const style: Record<string, unknown> = { font: FONT_DEFAULT }
+            if (i >= 4 && i <= 14) style.alignment = ALIGN_CENTER
+            else style.alignment = { vertical: 'center' as const }
+            setCell(ws, currentRow, i, v, style)
+        })
 
-        // Acumular totales
+        currentRow++
+
         totales.horaIn += linea.horaIn
         totales.horaOut += linea.horaOut
         totales.almuerzo += linea.almuerzo
@@ -255,75 +252,48 @@ export async function generarExcelNomina(
     }
 
     // ─── Tabla de totales ───────────────────────────────────────
-    ws.addRow([]) // fila vacía
-    ws.addRow([]) // fila vacía
+    currentRow += 2 // 2 filas vacías
 
     // Fila SUBTOTALES
-    const rowSubtotales = ws.addRow([])
-    rowSubtotales.getCell(5).value = totales.horaIn
-    rowSubtotales.getCell(6).value = totales.horaOut
-    rowSubtotales.getCell(7).value = totales.almuerzo
-    rowSubtotales.getCell(8).value = totales.horas
-    rowSubtotales.getCell(9).value = totales.extraDiurna
-    rowSubtotales.getCell(10).value = totales.extraNocturna
-    rowSubtotales.getCell(11).value = totales.extraFestivaDiurna
-    rowSubtotales.getCell(12).value = totales.extraFestivaNocturna
-    rowSubtotales.getCell(13).value = totales.recargoNocturno
-    rowSubtotales.getCell(14).value = totales.recargoFestivoNocturno
-    rowSubtotales.getCell(15).value = totales.recargoFestivo
-    for (let c = 5; c <= 15; c++) {
-        rowSubtotales.getCell(c).font = FONT_BOLD
-        rowSubtotales.getCell(c).alignment = ALIGN_CENTER
-        rowSubtotales.getCell(c).border = BORDER_THIN
-    }
+    const subtotalesVals = [
+        totales.horaIn, totales.horaOut, totales.almuerzo, totales.horas,
+        totales.extraDiurna, totales.extraNocturna, totales.extraFestivaDiurna,
+        totales.extraFestivaNocturna, totales.recargoNocturno,
+        totales.recargoFestivoNocturno, totales.recargoFestivo,
+    ]
+    subtotalesVals.forEach((v, i) => {
+        setStyledCell(ws, currentRow, 4 + i, v, { font: FONT_BOLD, alignment: ALIGN_CENTER, border: BORDER_THIN })
+    })
+    currentRow++
 
     // Fila CONCEPTO
-    const rowConcepto = ws.addRow([])
-    const conceptos = ['', '', '', '', '', '', '', '', 'H.E', 'H.E.N', 'E.F.D', 'E.F.N', 'R.N', 'R.F.N', 'R.F']
+    const conceptos = ['H.E', 'H.E.N', 'E.F.D', 'E.F.N', 'R.N', 'R.F.N', 'R.F']
     conceptos.forEach((c, i) => {
-        if (c) {
-            const cell = rowConcepto.getCell(i + 1)
-            cell.value = c
-            cell.font = FONT_BOLD
-            cell.alignment = ALIGN_CENTER
-            cell.fill = FILL_LIGHT_YELLOW
-            cell.border = BORDER_THIN
-        }
+        setStyledCell(ws, currentRow, 8 + i, c, { font: FONT_BOLD, alignment: ALIGN_CENTER, fill: FILL_LIGHT_YELLOW, border: BORDER_THIN })
     })
+    currentRow++
 
     // Fila CÓDIGO NOMINA
-    const rowCodigos = ws.addRow([])
-    rowCodigos.getCell(4).value = 'CÓDIGO NOMINA'
-    rowCodigos.getCell(4).font = FONT_BOLD
+    setStyledCell(ws, currentRow, 3, 'CÓDIGO NOMINA', { font: FONT_BOLD })
     codigosOrden.forEach((tipo, i) => {
         const tarifa = tarifaMap.get(tipo)
-        const cell = rowCodigos.getCell(9 + i)
-        cell.value = tarifa?.codigo_nomina ? Number(tarifa.codigo_nomina) : ''
-        cell.font = FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.fill = FILL_LIGHT_YELLOW
-        cell.border = BORDER_THIN
+        const val = tarifa?.codigo_nomina ? Number(tarifa.codigo_nomina) : ''
+        setStyledCell(ws, currentRow, 8 + i, val, { font: FONT_BOLD, alignment: ALIGN_CENTER, fill: FILL_LIGHT_YELLOW, border: BORDER_THIN })
     })
+    currentRow++
 
     // Fila VALOR por hora
-    const rowValor = ws.addRow([])
-    rowValor.getCell(4).value = 'VALOR'
-    rowValor.getCell(4).font = FONT_BOLD
+    setStyledCell(ws, currentRow, 3, 'VALOR', { font: FONT_BOLD })
     codigosOrden.forEach((tipo, i) => {
         const tarifa = tarifaMap.get(tipo)
-        const cell = rowValor.getCell(9 + i)
-        cell.value = tarifa?.precio_por_hora ?? 0
-        cell.numFmt = '#,##0'
-        cell.font = FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.fill = FILL_YELLOW
-        cell.border = BORDER_THIN
+        setStyledCell(ws, currentRow, 8 + i, tarifa?.precio_por_hora ?? 0, {
+            font: FONT_BOLD, alignment: ALIGN_CENTER, fill: FILL_YELLOW, border: BORDER_THIN, numFmt: '#,##0',
+        })
     })
+    currentRow++
 
     // Fila TOTAL (horas × valor)
-    const rowTotal = ws.addRow([])
-    rowTotal.getCell(4).value = 'TOTAL'
-    rowTotal.getCell(4).font = FONT_BOLD
+    setStyledCell(ws, currentRow, 3, 'TOTAL', { font: FONT_BOLD })
     const totalesEspeciales = [
         totales.extraDiurna, totales.extraNocturna, totales.extraFestivaDiurna,
         totales.extraFestivaNocturna, totales.recargoNocturno,
@@ -332,56 +302,49 @@ export async function generarExcelNomina(
     codigosOrden.forEach((tipo, i) => {
         const tarifa = tarifaMap.get(tipo)
         const valor = (tarifa?.precio_por_hora ?? 0) * totalesEspeciales[i]
-        const cell = rowTotal.getCell(9 + i)
-        cell.value = valor
-        cell.numFmt = '$#,##0'
-        cell.font = FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.border = BORDER_THIN
+        setStyledCell(ws, currentRow, 8 + i, valor, {
+            font: FONT_BOLD, alignment: ALIGN_CENTER, border: BORDER_THIN, numFmt: '"$"#,##0',
+        })
     })
+    currentRow++
 
     // Fila vacía
-    ws.addRow([])
+    currentRow++
 
     // Fila PORCENTAJE
     const tarifaNormal = tarifaMap.get('normal')?.precio_por_hora ?? 7959
-    const rowPorcentaje = ws.addRow([])
-    rowPorcentaje.getCell(4).value = 'PORCENTAJE'
-    rowPorcentaje.getCell(4).font = FONT_BOLD
+    setStyledCell(ws, currentRow, 3, 'PORCENTAJE', { font: FONT_BOLD })
     codigosOrden.forEach((tipo, i) => {
         const tarifa = tarifaMap.get(tipo)
         const pct = tarifa ? Math.round(((tarifa.precio_por_hora / tarifaNormal) - 1) * 100) : 0
-        const cell = rowPorcentaje.getCell(9 + i)
-        cell.value = `${pct}%`
-        cell.font = FONT_BOLD
-        cell.alignment = ALIGN_CENTER
-        cell.fill = FILL_YELLOW
-        cell.border = BORDER_THIN
+        setStyledCell(ws, currentRow, 8 + i, `${pct}%`, {
+            font: FONT_BOLD, alignment: ALIGN_CENTER, fill: FILL_YELLOW, border: BORDER_THIN,
+        })
     })
+    currentRow++
 
     // Fila salario base y valor hora
     const salarioBase = Math.round(tarifaNormal * HORAS_LEGALES_MES)
-    const rowSalario = ws.addRow([])
-    rowSalario.getCell(5).value = salarioBase
-    rowSalario.getCell(5).numFmt = '#,##0'
-    rowSalario.getCell(5).font = FONT_BOLD
-    rowSalario.getCell(6).value = tarifaNormal
-    rowSalario.getCell(6).numFmt = '#,##0'
-    rowSalario.getCell(6).font = FONT_BOLD
-
+    setStyledCell(ws, currentRow, 4, salarioBase, { font: FONT_BOLD, numFmt: '#,##0' })
+    setStyledCell(ws, currentRow, 5, tarifaNormal, { font: FONT_BOLD, numFmt: '#,##0' })
     codigosOrden.forEach((tipo, i) => {
         const tarifa = tarifaMap.get(tipo)
-        const cell = rowSalario.getCell(9 + i)
-        cell.value = tarifa?.precio_por_hora ?? 0
-        cell.numFmt = '#,##0'
-        cell.alignment = ALIGN_CENTER
+        setCell(ws, currentRow, 8 + i, tarifa?.precio_por_hora ?? 0, {
+            alignment: ALIGN_CENTER,
+            numFmt: '#,##0',
+        })
     })
 
-    // ─── Auto-filter en headers ─────────────────────────────────
-    ws.autoFilter = {
-        from: { row: 3, column: 1 },
-        to: { row: 3, column: 20 },
-    }
+    // ─── Frozen panes ───────────────────────────────────────────
+    ws['!freeze'] = { xSplit: 0, ySplit: 4, topLeftCell: 'A5', activePane: 'bottomLeft', state: 'frozen' }
 
-    return await wb.xlsx.writeBuffer() as ArrayBuffer
+    // ─── Auto-filter en headers ─────────────────────────────────
+    ws['!autofilter'] = { ref: 'A3:T3' }
+
+    // ─── Set range ──────────────────────────────────────────────
+    ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: currentRow, c: 19 } })
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Nómina')
+
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Uint8Array
 }

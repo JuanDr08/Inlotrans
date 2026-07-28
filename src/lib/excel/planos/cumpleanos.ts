@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs'
+import XLSX from 'xlsx-js-style'
 import {
     TIPOS_AUSENTISMO,
     CLASES_AUSENTISMO,
@@ -24,13 +24,14 @@ function formatDDMMYYYY(iso: string): string {
     return `${d}${m}${y}`
 }
 
-export async function generarPlanoCumpleanos(
+export function generarPlanoCumpleanos(
     novedades: NovedadCumpleanos[],
-): Promise<ArrayBuffer> {
-    const wb = new ExcelJS.Workbook()
+): Uint8Array {
+    const wb = XLSX.utils.book_new()
 
     // ── Hoja 1 ──────────────────────────────────────────────────
-    const ws1 = wb.addWorksheet('Hoja 1')
+    const ws1: XLSX.WorkSheet = {}
+    let currentRow = 0
 
     const headerBlock: [string, string | number, string?][] = [
         ['TIPO AUSENTISMO', TIPO, TIPOS_AUSENTISMO[TIPO]],
@@ -42,35 +43,41 @@ export async function generarPlanoCumpleanos(
     ]
 
     for (const row of headerBlock) {
-        ws1.addRow(row)
+        XLSX.utils.sheet_add_aoa(ws1, [row], { origin: currentRow })
+        currentRow++
     }
 
-    ws1.addRow([]) // fila vacía
+    currentRow++ // fila vacía
 
-    ws1.addRow([
+    XLSX.utils.sheet_add_aoa(ws1, [[
         'CODIGO EMPLEADO DESIGNER',
         'DIAS AUSENTISMO',
         'FECHA INICIAL AUSENTISMO',
         'FECHA INICIAL PAGO AUSENTISMO',
-    ])
+    ]], { origin: currentRow })
+    currentRow++
 
     for (const n of novedades) {
         const fecha = formatMMDDYY(n.fecha_novedad)
-        ws1.addRow([
+        XLSX.utils.sheet_add_aoa(ws1, [[
             Number(n.cedula) || n.cedula,
             1,
             fecha,
             fecha,
             'DIA DE CUMPLEAÑOS',
-        ])
+        ]], { origin: currentRow })
+        currentRow++
     }
 
+    XLSX.utils.book_append_sheet(wb, ws1, 'Hoja 1')
+
     // ── Hoja 2 ──────────────────────────────────────────────────
-    const ws2 = wb.addWorksheet('Hoja 2')
+    const ws2: XLSX.WorkSheet = {}
+    let currentRow2 = 0
 
     for (const n of novedades) {
         const fecha = formatDDMMYYYY(n.fecha_novedad)
-        ws2.addRow([
+        XLSX.utils.sheet_add_aoa(ws2, [[
             Number(n.cedula) || n.cedula,
             TIPO,
             CLASE,
@@ -84,8 +91,11 @@ export async function generarPlanoCumpleanos(
             0,
             '',
             'BASICO',
-        ])
+        ]], { origin: currentRow2 })
+        currentRow2++
     }
 
-    return await wb.xlsx.writeBuffer() as ArrayBuffer
+    XLSX.utils.book_append_sheet(wb, ws2, 'Hoja 2')
+
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Uint8Array
 }

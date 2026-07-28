@@ -55,10 +55,10 @@ export async function GET(request: NextRequest) {
         }))
 
         const periodo = { anio, mes, quincena }
-        const buffer = await generarPlanoAuxilio(datos, periodo)
+        const buffer = generarPlanoAuxilio(datos, periodo)
 
         const filename = `plano_auxilio_${anio}-${pad(mes)}_${quincena}Q.xlsx`
-        return new NextResponse(new Uint8Array(buffer), {
+        return new NextResponse(buffer.buffer as ArrayBuffer, {
             status: 200,
             headers: {
                 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

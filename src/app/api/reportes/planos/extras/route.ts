@@ -134,10 +134,10 @@ export async function GET(request: NextRequest) {
         lineas.sort((a, b) => a.cedula.localeCompare(b.cedula) || a.codigo - b.codigo)
 
         const periodo = { anio, mes, quincena }
-        const buffer = await generarPlanoExtras(lineas, periodo)
+        const buffer = generarPlanoExtras(lineas, periodo)
 
         const filename = `plano_extras_${anio}-${pad(mes)}_${quincena}Q.xlsx`
-        return new NextResponse(new Uint8Array(buffer), {
+        return new NextResponse(buffer.buffer as ArrayBuffer, {
             status: 200,
             headers: {
                 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

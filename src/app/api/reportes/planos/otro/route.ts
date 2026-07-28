@@ -70,10 +70,10 @@ export async function GET(request: NextRequest) {
             es_pagado: n.es_pagado === 1,
         }))
 
-        const buffer = await generarPlanoOtro(datos, tipo, clase, causa)
+        const buffer = generarPlanoOtro(datos, tipo, clase, causa)
 
         const filename = `plano_ausentismo_${tipo}_${causa}_${anio}-${pad(mes)}_${quincena}Q.xlsx`
-        return new NextResponse(new Uint8Array(buffer), {
+        return new NextResponse(buffer.buffer as ArrayBuffer, {
             status: 200,
             headers: {
                 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

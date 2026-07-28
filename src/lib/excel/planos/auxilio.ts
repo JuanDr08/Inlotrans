@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs'
+import XLSX from 'xlsx-js-style'
 import { CODIGOS_NOMINA, MESES_ABREVIADOS } from '@/lib/constants/ausentismos'
 
 export interface NovedadAuxilio {
@@ -25,11 +25,16 @@ function buildPeriodicidad(quincena: 1 | 2): string {
     return `${quincena}-QUINCENAL`
 }
 
-export async function generarPlanoAuxilio(
+function setCell(ws: XLSX.WorkSheet, r: number, c: number, v: string | number): void {
+    const addr = XLSX.utils.encode_cell({ r, c })
+    ws[addr] = { v, t: typeof v === 'number' ? 'n' : 's' }
+}
+
+export function generarPlanoAuxilio(
     novedades: NovedadAuxilio[],
     periodo: PeriodoPlano,
-): Promise<ArrayBuffer> {
-    const wb = new ExcelJS.Workbook()
+): Uint8Array {
+    const wb = XLSX.utils.book_new()
     const { anio, mes, quincena } = periodo
 
     const lastDay = new Date(anio, mes, 0).getDate()
@@ -42,7 +47,8 @@ export async function generarPlanoAuxilio(
     const periodicidad = buildPeriodicidad(quincena)
 
     // ── Hoja 1 ──────────────────────────────────────────────────
-    const ws1 = wb.addWorksheet('Hoja 1')
+    const ws1: XLSX.WorkSheet = {}
+    let currentRow = 0
 
     const headerBlock: [string, string][] = [
         ['FECHA INICIAL PERIODO', fechaInicio],
@@ -53,10 +59,11 @@ export async function generarPlanoAuxilio(
     ]
 
     for (const row of headerBlock) {
-        ws1.addRow(row)
+        XLSX.utils.sheet_add_aoa(ws1, [row], { origin: currentRow })
+        currentRow++
     }
 
-    ws1.addRow([]) // fila vacía
+    currentRow++ // fila vacía
 
     const codigosEntries = Object.entries(CODIGOS_NOMINA).map(([code, label]) => [
         parseInt(code),
@@ -64,19 +71,19 @@ export async function generarPlanoAuxilio(
     ])
 
     for (let i = 0; i < codigosEntries.length; i++) {
-        const targetRow = ws1.getRow(i + 1)
-        targetRow.getCell(5).value = codigosEntries[i][0]
-        targetRow.getCell(6).value = codigosEntries[i][1]
+        setCell(ws1, i, 4, codigosEntries[i][0] as number)
+        setCell(ws1, i, 5, codigosEntries[i][1] as string)
     }
 
-    ws1.addRow([]) // fila vacía
+    currentRow++ // fila vacía
 
-    ws1.addRow([
+    XLSX.utils.sheet_add_aoa(ws1, [[
         'CEDULA', '', 'CONCEPTO', '', 'VALOR', 'SALDO', 'NIT', 'HORAS', 'MINUTOS',
-    ])
+    ]], { origin: currentRow })
+    currentRow++
 
     for (const n of novedades) {
-        ws1.addRow([
+        XLSX.utils.sheet_add_aoa(ws1, [[
             Number(n.cedula) || n.cedula,
             '',
             12530,
@@ -87,14 +94,24 @@ export async function generarPlanoAuxilio(
             '',
             '',
             'AUX NO PRESTACIONAL',
-        ])
+        ]], { origin: currentRow })
+        currentRow++
     }
 
+    // El bloque de códigos (columnas E/F) puede exceder el rango escrito por sheet_add_aoa
+    const ws1Range = XLSX.utils.decode_range(ws1['!ref'] ?? 'A1:A1')
+    ws1Range.e.r = Math.max(ws1Range.e.r, codigosEntries.length - 1)
+    ws1Range.e.c = Math.max(ws1Range.e.c, 5)
+    ws1['!ref'] = XLSX.utils.encode_range(ws1Range)
+
+    XLSX.utils.book_append_sheet(wb, ws1, 'Hoja 1')
+
     // ── Hoja 2 ──────────────────────────────────────────────────
-    const ws2 = wb.addWorksheet('Hoja 2')
+    const ws2: XLSX.WorkSheet = {}
+    let currentRow2 = 0
 
     for (const n of novedades) {
-        ws2.addRow([
+        XLSX.utils.sheet_add_aoa(ws2, [[
             12530,
             Number(n.cedula) || n.cedula,
             fechaInicio,
@@ -108,8 +125,11 @@ export async function generarPlanoAuxilio(
             '',
             '',
             'OCASIONAL',
-        ])
+        ]], { origin: currentRow2 })
+        currentRow2++
     }
 
-    return await wb.xlsx.writeBuffer() as ArrayBuffer
+    XLSX.utils.book_append_sheet(wb, ws2, 'Hoja 2')
+
+    return XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }) as Uint8Array
 }
